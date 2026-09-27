@@ -1,4 +1,4 @@
-module github.com/alireza/work-today
+module github.com/aazerra/work-today
 
 go 1.27.1
 

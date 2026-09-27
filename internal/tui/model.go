@@ -11,8 +11,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/google/uuid"
 
-	"github.com/alireza/work-today/internal/model"
-	"github.com/alireza/work-today/internal/storage"
+	"github.com/aazerra/work-today/internal/model"
+	"github.com/aazerra/work-today/internal/storage"
 )
 
 // Mode describes which interaction layer is active.

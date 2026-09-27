@@ -7,31 +7,31 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/alireza/work-today/internal/model"
-	"github.com/alireza/work-today/internal/storage"
+	"github.com/aazerra/work-today/internal/model"
+	"github.com/aazerra/work-today/internal/storage"
 )
 
 var (
-	colorMuted  = lipgloss.Color("245")
-	colorAccent = lipgloss.Color("39")
-	colorTodo   = lipgloss.Color("252")
-	colorDoing  = lipgloss.Color("214")
-	colorDone   = lipgloss.Color("114")
-	colorDanger = lipgloss.Color("203")
-	colorBorder = lipgloss.Color("238")
+	colorMuted          = lipgloss.Color("245")
+	colorAccent         = lipgloss.Color("39")
+	colorTodo           = lipgloss.Color("252")
+	colorDoing          = lipgloss.Color("214")
+	colorDone           = lipgloss.Color("114")
+	colorDanger         = lipgloss.Color("203")
+	colorBorder         = lipgloss.Color("238")
 	colorPriorityHigh   = lipgloss.Color("196")
 	colorPriorityMedium = lipgloss.Color("214")
 	colorPriorityLow    = lipgloss.Color("75")
 
 	priorityHighStyle = lipgloss.NewStyle().
-			Foreground(colorPriorityHigh).
-			Bold(true)
+				Foreground(colorPriorityHigh).
+				Bold(true)
 
 	priorityMediumStyle = lipgloss.NewStyle().
-			Foreground(colorPriorityMedium)
+				Foreground(colorPriorityMedium)
 
 	priorityLowStyle = lipgloss.NewStyle().
-			Foreground(colorPriorityLow)
+				Foreground(colorPriorityLow)
 
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -103,8 +103,8 @@ var (
 			MarginTop(1)
 
 	promptLabelStyle = lipgloss.NewStyle().
-			Foreground(colorAccent).
-			Bold(true)
+				Foreground(colorAccent).
+				Bold(true)
 
 	dangerStyle = lipgloss.NewStyle().
 			Foreground(colorDanger).

@@ -1,7 +1,7 @@
 # work-today (`today`)
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/alireza/work-today.svg)](https://pkg.go.dev/github.com/alireza/work-today)
-[![Go Report Card](https://goreportcard.com/badge/github.com/alireza/work-today)](https://goreportcard.com/report/github.com/alireza/work-today)
+[![Go Reference](https://pkg.go.dev/badge/github.com/aazerra/work-today.svg)](https://pkg.go.dev/github.com/aazerra/work-today)
+[![Go Report Card](https://goreportcard.com/badge/github.com/aazerra/work-today)](https://goreportcard.com/report/github.com/aazerra/work-today)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 An opinionated, minimalist, keyboard-driven daily task manager for the terminal. Built with Go and the [Charm](https://charm.sh) ecosystem ([Bubble Tea](https://github.com/charmbracelet/bubbletea), [Lip Gloss](https://github.com/charmbracelet/lipgloss), [Bubbles](https://github.com/charmbracelet/bubbles)).
@@ -56,7 +56,7 @@ Focus strictly on **what needs to get done today**—no endless backlog hoarding
 ### From Source (Go 1.22+)
 
 ```bash
-go install github.com/alireza/work-today/cmd/today@latest
+go install github.com/aazerra/work-today/cmd/today@latest
 ```
 
 Ensure `$GOPATH/bin` or `$HOME/go/bin` is in your `$PATH`.
@@ -64,7 +64,7 @@ Ensure `$GOPATH/bin` or `$HOME/go/bin` is in your `$PATH`.
 ### Clone & Build Locally
 
 ```bash
-git clone https://github.com/alireza/work-today.git
+git clone https://github.com/aazerra/work-today.git
 cd work-today
 go build -o today ./cmd/today
 sudo mv today /usr/local/bin/

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/alireza/work-today/internal/model"
+	"github.com/aazerra/work-today/internal/model"
 )
 
 const (

@@ -6,8 +6,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/alireza/work-today/internal/cli"
-	"github.com/alireza/work-today/internal/tui"
+	"github.com/aazerra/work-today/internal/cli"
+	"github.com/aazerra/work-today/internal/tui"
 )
 
 func main() {

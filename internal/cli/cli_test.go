@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alireza/work-today/internal/cli"
-	"github.com/alireza/work-today/internal/model"
-	"github.com/alireza/work-today/internal/storage"
+	"github.com/aazerra/work-today/internal/cli"
+	"github.com/aazerra/work-today/internal/model"
+	"github.com/aazerra/work-today/internal/storage"
 )
 
 func setupTestStorage(t *testing.T) {

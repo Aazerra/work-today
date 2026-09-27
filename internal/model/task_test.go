@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alireza/work-today/internal/model"
+	"github.com/aazerra/work-today/internal/model"
 )
 
 func TestNextStatusCycles(t *testing.T) {

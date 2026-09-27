@@ -11,8 +11,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/alireza/work-today/internal/model"
-	"github.com/alireza/work-today/internal/storage"
+	"github.com/aazerra/work-today/internal/model"
+	"github.com/aazerra/work-today/internal/storage"
 )
 
 // Run executes a CLI subcommand using standard stdout and stderr.

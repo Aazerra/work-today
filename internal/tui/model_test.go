@@ -7,9 +7,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/alireza/work-today/internal/model"
-	"github.com/alireza/work-today/internal/storage"
-	"github.com/alireza/work-today/internal/tui"
+	"github.com/aazerra/work-today/internal/model"
+	"github.com/aazerra/work-today/internal/storage"
+	"github.com/aazerra/work-today/internal/tui"
 )
 
 func setupTestModel(t *testing.T, tasks []model.Task) tui.Model {
