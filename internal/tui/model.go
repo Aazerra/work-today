@@ -41,26 +41,32 @@ type Model struct {
 }
 
 type keyMap struct {
-	Up     key.Binding
-	Down   key.Binding
-	Add    key.Binding
-	Edit   key.Binding
-	Delete key.Binding
-	Toggle key.Binding
-	Quit   key.Binding
-	Help   key.Binding
+	Up       key.Binding
+	Down     key.Binding
+	MoveUp   key.Binding
+	MoveDown key.Binding
+	Add      key.Binding
+	Edit     key.Binding
+	Delete   key.Binding
+	Toggle   key.Binding
+	Priority key.Binding
+	Quit     key.Binding
+	Help     key.Binding
 }
 
 func defaultKeys() keyMap {
 	return keyMap{
-		Up:     key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
-		Down:   key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
-		Add:    key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add")),
-		Edit:   key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
-		Delete: key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
-		Toggle: key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("↵/space", "cycle status")),
-		Quit:   key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
-		Help:   key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+		Up:       key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+		Down:     key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+		MoveUp:   key.NewBinding(key.WithKeys("K", "shift+up"), key.WithHelp("K", "move up")),
+		MoveDown: key.NewBinding(key.WithKeys("J", "shift+down"), key.WithHelp("J", "move down")),
+		Add:      key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add")),
+		Edit:     key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
+		Delete:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
+		Toggle:   key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("↵/space", "cycle status")),
+		Priority: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "priority")),
+		Quit:     key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+		Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	}
 }
 
@@ -179,8 +185,49 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		t.UpdatedAt = time.Now()
 		return m, m.persist()
 
+	case key.Matches(msg, m.keys.Priority):
+		if len(m.doc.Tasks) == 0 {
+			m.status = "nothing to prioritize"
+			return m, nil
+		}
+		t := &m.doc.Tasks[m.cursor]
+		t.Priority = model.NextPriority(t.Priority)
+		t.UpdatedAt = time.Now()
+		if t.Priority == model.PriorityNone {
+			m.status = "priority cleared"
+		} else {
+			m.status = fmt.Sprintf("priority: %s", model.PriorityLabel(t.Priority))
+		}
+		return m, m.persist()
+
+	case key.Matches(msg, m.keys.MoveUp):
+		if len(m.doc.Tasks) == 0 {
+			return m, nil
+		}
+		if m.cursor > 0 {
+			m.doc.Tasks[m.cursor], m.doc.Tasks[m.cursor-1] = m.doc.Tasks[m.cursor-1], m.doc.Tasks[m.cursor]
+			m.cursor--
+			m.status = "task moved up"
+			return m, m.persist()
+		}
+		m.status = "already at top"
+		return m, nil
+
+	case key.Matches(msg, m.keys.MoveDown):
+		if len(m.doc.Tasks) == 0 {
+			return m, nil
+		}
+		if m.cursor < len(m.doc.Tasks)-1 {
+			m.doc.Tasks[m.cursor], m.doc.Tasks[m.cursor+1] = m.doc.Tasks[m.cursor+1], m.doc.Tasks[m.cursor]
+			m.cursor++
+			m.status = "task moved down"
+			return m, m.persist()
+		}
+		m.status = "already at bottom"
+		return m, nil
+
 	case key.Matches(msg, m.keys.Help):
-		m.status = "a add · e edit · d delete · ↵ cycle · j/k move · q quit"
+		m.status = "a add · e edit · d delete · p priority · J/K reorder · ↵ cycle · j/k move · q quit"
 	}
 	return m, nil
 }

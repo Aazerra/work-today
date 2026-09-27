@@ -19,6 +19,19 @@ var (
 	colorDone   = lipgloss.Color("114")
 	colorDanger = lipgloss.Color("203")
 	colorBorder = lipgloss.Color("238")
+	colorPriorityHigh   = lipgloss.Color("196")
+	colorPriorityMedium = lipgloss.Color("214")
+	colorPriorityLow    = lipgloss.Color("75")
+
+	priorityHighStyle = lipgloss.NewStyle().
+			Foreground(colorPriorityHigh).
+			Bold(true)
+
+	priorityMediumStyle = lipgloss.NewStyle().
+			Foreground(colorPriorityMedium)
+
+	priorityLowStyle = lipgloss.NewStyle().
+			Foreground(colorPriorityLow)
 
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -184,6 +197,28 @@ func (m Model) renderTaskList() string {
 	return strings.Join(lines, "\n")
 }
 
+func renderPriorityBadge(priority string, done bool) string {
+	if priority == "" {
+		return ""
+	}
+	var style lipgloss.Style
+	if done {
+		style = lipgloss.NewStyle().Foreground(colorMuted)
+	} else {
+		switch priority {
+		case model.PriorityHigh:
+			style = priorityHighStyle
+		case model.PriorityMedium:
+			style = priorityMediumStyle
+		case model.PriorityLow:
+			style = priorityLowStyle
+		default:
+			style = subtitleStyle
+		}
+	}
+	return style.Render(fmt.Sprintf("[%s]", model.PriorityLabel(priority))) + " "
+}
+
 func (m Model) renderTaskRow(i int, t model.Task) string {
 	var glyphStyle, labelStyle, titleStyle lipgloss.Style
 	switch t.Status {
@@ -202,6 +237,8 @@ func (m Model) renderTaskRow(i int, t model.Task) string {
 		cursor = "  "
 	}
 
+	pBadge := renderPriorityBadge(t.Priority, t.Status == model.StatusDone)
+
 	return lipgloss.JoinHorizontal(
 		lipgloss.Top,
 		cursor,
@@ -209,12 +246,13 @@ func (m Model) renderTaskRow(i int, t model.Task) string {
 		" ",
 		labelStyle.Render(model.StatusLabel(t.Status)),
 		"  ",
+		pBadge,
 		titleStyle.Render(t.Title),
 	)
 }
 
 func (m Model) renderFooter() string {
-	help := "a add · e edit · d delete · ↵/space cycle · j/k navigate · esc cancel · q quit"
+	help := "a add · e edit · d delete · p priority · J/K reorder · ↵/space cycle · j/k navigate · esc cancel · q quit"
 	if m.mode == ModeAdd || m.mode == ModeEdit {
 		help = "enter confirm · esc cancel"
 	} else if m.mode == ModeConfirmDelete {

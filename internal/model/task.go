@@ -12,16 +12,28 @@ const (
 // ValidStatuses lists statuses in cycle order: todo → in_progress → done → todo.
 var ValidStatuses = []string{StatusTodo, StatusInProgress, StatusDone}
 
+// Task priority constants.
+const (
+	PriorityNone   = ""
+	PriorityHigh   = "high"
+	PriorityMedium = "medium"
+	PriorityLow    = "low"
+)
+
+// ValidPriorities lists priorities in cycle order: none → high → medium → low → none.
+var ValidPriorities = []string{PriorityNone, PriorityHigh, PriorityMedium, PriorityLow}
+
 // Task is a single work item for the day.
 type Task struct {
 	ID        string    `json:"id"`
 	Title     string    `json:"title"`
 	Status    string    `json:"status"`
+	Priority  string    `json:"priority,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// Document is the on-disk shape of ~/.work_today.json.
+// Document is the on-disk shape of tasks storage (e.g. XDG tasks.json or legacy ~/.work_today.json).
 type Document struct {
 	Date  string `json:"date"` // YYYY-MM-DD local date the file belongs to
 	Tasks []Task `json:"tasks"`
@@ -62,5 +74,29 @@ func StatusGlyph(status string) string {
 		return "[x]"
 	default:
 		return "[?]"
+	}
+}
+
+// NextPriority returns the next priority in the cycle: none → high → medium → low → none.
+func NextPriority(current string) string {
+	for i, p := range ValidPriorities {
+		if p == current {
+			return ValidPriorities[(i+1)%len(ValidPriorities)]
+		}
+	}
+	return PriorityNone
+}
+
+// PriorityLabel returns a short display label for a priority.
+func PriorityLabel(priority string) string {
+	switch priority {
+	case PriorityHigh:
+		return "HIGH"
+	case PriorityMedium:
+		return "MED"
+	case PriorityLow:
+		return "LOW"
+	default:
+		return ""
 	}
 }
