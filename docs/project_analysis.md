@@ -36,16 +36,20 @@
 └── work-today/
     ├── cmd/
     │   └── today/
-    │       └── main.go              # CLI entry point, Bubble Tea program runner
+    │       └── main.go              # CLI entry point (dispatches to CLI subcommands or TUI runner)
     ├── internal/
+    │   ├── cli/
+    │   │   ├── cli.go               # Headless CLI subcommands (add, list, status, done, export, help)
+    │   │   └── cli_test.go          # Unit tests for CLI subcommands
     │   ├── model/
-    │   │   ├── task.go              # Task & Document types, status cycle state machine
-    │   │   └── task_test.go         # Status transition unit tests
+    │   │   ├── task.go              # Task & Document types, status & priority cycles, export markdown
+    │   │   └── task_test.go         # Model and export unit tests
     │   ├── storage/
-    │   │   ├── json.go              # JSON persistence, atomic write, daily rollover logic
-    │   │   └── json_test.go         # Round-trip and rollover behavior tests
+    │   │   ├── json.go              # JSON persistence, XDG path resolution, atomic write, daily rollover
+    │   │   └── json_test.go         # Round-trip, XDG, and rollover behavior tests
     │   └── tui/
-    │       ├── model.go             # Bubble Tea Model, event handlers, modes, keybindings
+    │       ├── model.go             # Bubble Tea Model, event handlers, undo/redo stack, keybindings
+    │       ├── model_test.go        # Interaction tests for reordering, priority cycling, undo/redo
     │       └── views.go             # Lip Gloss rendering components (header, list, dialogs, footer)
     ├── docs/
     │   └── project_analysis.md      # Project specification & architectural reference
@@ -205,6 +209,9 @@ The TUI leverages Bubble Tea's Model-Update-View architecture.
 | `K` / `Shift+Up` | Move selected task up (reorder) | `ModeList` |
 | `J` / `Shift+Down` | Move selected task down (reorder) | `ModeList` |
 | `p` | Cycle task priority (`None` → `HIGH` → `MED` → `LOW`) | `ModeList` |
+| `u` | Undo last action (stack depth up to 50) | `ModeList` |
+| `U` / `Ctrl+R` | Redo last undone action | `ModeList` |
+| `c` / `y` | Copy formatted Markdown checklist to clipboard | `ModeList` |
 | `Enter` / `Space` | Cycle task status (`todo` → `doing` → `done`) | `ModeList` |
 | `a` | Enter Add Task mode | `ModeList` |
 | `e` | Enter Edit Task mode | `ModeList` |
@@ -227,17 +234,39 @@ The TUI leverages Bubble Tea's Model-Update-View architecture.
    - Mode-specific overlay widgets (rounded border text input box for Add/Edit; red warning banner for deletion).
 3. **Footer**:
    - Shortcut legend dynamic to current mode.
-   - Status message area showing transient notices (`"task added"`, `"saved"`, `"task moved up"`, `"priority: HIGH"`).
+   - Status message area showing transient notices (`"task added"`, `"saved"`, `"action undone"`, `"copied markdown to clipboard"`).
+
+---
+
+### 4.4. Headless CLI Subcommands (`internal/cli/cli.go`)
+
+When run with arguments (`today <command> [args]`), non-interactive subcommands execute directly without initializing the TUI:
+
+| Subcommand | Syntax / Flags | Description |
+| :--- | :--- | :--- |
+| `add` / `+` | `today add [-p PRIORITY] <title>` | Appends a task to today's list with optional priority (`high`, `med`, `low`). |
+| `list` / `ls` | `today list` | Prints today's tasks with 1-based indices, checkboxes, and priority tags to stdout. |
+| `status` | `today status` | Prints a single-line summary (e.g., `2/5 done` or `All done! (5/5)`) for tmux / status bars. |
+| `done` | `today done <number>` | Checks off a task by its 1-based list index. |
+| `export` | `today export` | Outputs today's checklist formatted in standard GitHub Markdown. |
+| `help` | `today help` | Displays CLI and TUI keyboard usage help. |
 
 ---
 
 ## 5. Testing & Verification
 
 Comprehensive unit tests across all packages:
+- `internal/cli/cli_test.go`:
+  - `TestCliAddAndList`: Tests CLI add with and without priority flags, and list formatting.
+  - `TestCliStatusAndDone`: Tests status counter output and checking off tasks by index.
+  - `TestCliExport`: Tests markdown export output.
+  - `TestCliErrors`: Tests error handling for empty titles, invalid/out-of-range task numbers, and unknown commands.
 - `internal/model/task_test.go`:
-  - `TestNextStatusCycles`: Tests all transitions in `NextStatus`, including fallback behavior for unknown statuses.
+  - `TestNextStatusCycles`: Tests all transitions in `NextStatus`.
   - `TestNextPriorityCycles`: Tests full cycle from none through high, medium, low, back to none.
   - `TestPriorityLabel`: Tests string label representations for each priority.
+  - `TestParsePriority`: Tests CLI flag normalization (e.g. `H`, `high`, `1`, `med`, `low`).
+  - `TestExportMarkdown`: Tests Markdown checklist generation with done/progress/todo items and priority tags.
 - `internal/storage/json_test.go`:
   - `TestPathResolution`: Validates clean XDG path resolution, custom `$XDG_DATA_HOME`, relative path rejection, legacy `$HOME/.work_today.json` fallback, XDG precedence over legacy, and `$WORK_TODAY_PATH` override.
   - `TestSaveAndLoadRoundTrip`: Validates writing to isolated `t.TempDir()`, verify path correctness (`.local/share/work-today/tasks.json`), directory creation, and unmarshaled data fidelity.
@@ -248,26 +277,27 @@ Comprehensive unit tests across all packages:
   - `TestReorderTasks`: Simulates `J` and `K` keystrokes, verifies in-memory swap and atomic disk persistence, and tests boundary conditions.
   - `TestPriorityCycling`: Simulates `p` keystroke cycling through all priority states and saving.
   - `TestViewsRendering`: Ensures view layout renders without runtime formatting panics.
+  - `TestUndoAndRedo`: Simulates deleting a task, undoing deletion (`u`), redoing deletion (`U`), toggling status, and undoing status changes.
 
 ---
 
 ## 6. Current Strengths & Identified Limitations
 
 ### Strengths
-- **Clean Separation of Concerns**: Storage, UI, and domain models are decoupled and independently testable.
+- **Clean Separation of Concerns**: Storage, UI, CLI, and domain models are decoupled and independently testable.
 - **Robust I/O**: Atomic save prevents file corruption during sudden terminal disconnects; auto-creates parent directories.
 - **XDG-Compliant with Legacy Fallback**: Adheres to modern Linux desktop standards while preserving existing user data without migration friction.
 - **Task Reordering & Prioritization**: Instant keyboard control (`J`/`K` to reorder, `p` to prioritize) with colored badges.
+- **Multi-Level Undo & Redo**: Safe task management with snapshot history stack (`u` to undo, `U`/`Ctrl+R` to redo).
+- **Clipboard & Standup Export**: Fast clipboard copying (`c`/`y`) and terminal Markdown export for standups.
+- **Headless Shell Integration**: `today add`, `today list`, `today status`, and `today done` work in scripts, terminal aliases, and status bars (tmux/starship).
 - **Minimalist UX**: Immediate startup, sub-millisecond responsiveness, zero latency.
 
 ### Identified Limitations & Enhancement Opportunities
-1. **CLI / Non-Interactive Commands**:
-   - `today` only operates as an interactive full-screen TUI.
-   - *Improvement*: Support subcommands (e.g., `today add "...", today list, today status`).
-2. **Undo Support**:
-   - Deleting a task cannot be undone (`u` key).
-3. **Task Metadata**:
-   - Does not currently support descriptions, subtasks, tags, or due time/reminders.
+1. **Task Metadata**:
+   - Does not currently support long descriptions, subtasks, tags, or due times/reminders.
+2. **History Archive**:
+   - Rollover clears yesterday's completed tasks without archiving them to a separate daily history file.
 
 ---
 

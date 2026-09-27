@@ -162,3 +162,68 @@ func TestViewsRendering(t *testing.T) {
 		t.Fatalf("expected non-empty view")
 	}
 }
+
+func TestUndoAndRedo(t *testing.T) {
+	now := time.Now()
+	tasks := []model.Task{
+		{ID: "1", Title: "Task 1", Status: model.StatusTodo, CreatedAt: now, UpdatedAt: now},
+		{ID: "2", Title: "Task 2", Status: model.StatusTodo, CreatedAt: now, UpdatedAt: now},
+	}
+
+	m := setupTestModel(t, tasks)
+
+	// 1. Delete task 1 ('d' -> 'y')
+	m = sendKey(m, "d").(tui.Model)
+	m = sendKey(m, "y").(tui.Model)
+
+	doc, err := storage.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(doc.Tasks) != 1 || doc.Tasks[0].Title != "Task 2" {
+		t.Fatalf("expected only Task 2 remaining, got %+v", doc.Tasks)
+	}
+
+	// 2. Undo deletion ('u')
+	m = sendKey(m, "u").(tui.Model)
+	doc, err = storage.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(doc.Tasks) != 2 || doc.Tasks[0].Title != "Task 1" {
+		t.Fatalf("expected Task 1 restored, got %+v", doc.Tasks)
+	}
+
+	// 3. Redo deletion ('U')
+	m = sendKey(m, "U").(tui.Model)
+	doc, err = storage.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(doc.Tasks) != 1 || doc.Tasks[0].Title != "Task 2" {
+		t.Fatalf("expected Task 1 deleted again, got %+v", doc.Tasks)
+	}
+
+	// 4. Undo back to 2 tasks
+	m = sendKey(m, "u").(tui.Model)
+
+	// 5. Toggle status (Enter) -> Todo to InProgress
+	m = sendKey(m, "enter").(tui.Model)
+	doc, err = storage.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if doc.Tasks[0].Status != model.StatusInProgress {
+		t.Fatalf("expected StatusInProgress, got %s", doc.Tasks[0].Status)
+	}
+
+	// 6. Undo status toggle
+	m = sendKey(m, "u").(tui.Model)
+	doc, err = storage.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if doc.Tasks[0].Status != model.StatusTodo {
+		t.Fatalf("expected StatusTodo restored, got %s", doc.Tasks[0].Status)
+	}
+}

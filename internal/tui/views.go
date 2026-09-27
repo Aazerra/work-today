@@ -252,7 +252,7 @@ func (m Model) renderTaskRow(i int, t model.Task) string {
 }
 
 func (m Model) renderFooter() string {
-	help := "a add · e edit · d delete · p priority · J/K reorder · ↵/space cycle · j/k navigate · esc cancel · q quit"
+	help := "a add · e edit · d del · p prio · J/K move · u undo · c copy · ↵ cycle · j/k nav · q quit"
 	if m.mode == ModeAdd || m.mode == ModeEdit {
 		help = "enter confirm · esc cancel"
 	} else if m.mode == ModeConfirmDelete {

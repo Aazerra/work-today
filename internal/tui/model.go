@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -29,15 +30,17 @@ type savedMsg struct{}
 
 // Model is the Bubble Tea application state.
 type Model struct {
-	doc      *model.Document
-	cursor   int
-	mode     Mode
-	input    textinput.Model
-	status   string
-	width    int
-	height   int
-	quitting bool
-	keys     keyMap
+	doc       *model.Document
+	undoStack [][]model.Task
+	redoStack [][]model.Task
+	cursor    int
+	mode      Mode
+	input     textinput.Model
+	status    string
+	width     int
+	height    int
+	quitting  bool
+	keys      keyMap
 }
 
 type keyMap struct {
@@ -50,6 +53,9 @@ type keyMap struct {
 	Delete   key.Binding
 	Toggle   key.Binding
 	Priority key.Binding
+	Undo     key.Binding
+	Redo     key.Binding
+	Copy     key.Binding
 	Quit     key.Binding
 	Help     key.Binding
 }
@@ -65,9 +71,23 @@ func defaultKeys() keyMap {
 		Delete:   key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
 		Toggle:   key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("↵/space", "cycle status")),
 		Priority: key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "priority")),
+		Undo:     key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "undo")),
+		Redo:     key.NewBinding(key.WithKeys("U", "ctrl+r"), key.WithHelp("U", "redo")),
+		Copy:     key.NewBinding(key.WithKeys("c", "y"), key.WithHelp("c/y", "copy markdown")),
 		Quit:     key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 		Help:     key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	}
+}
+
+func (m Model) withUndo() Model {
+	snapshot := make([]model.Task, len(m.doc.Tasks))
+	copy(snapshot, m.doc.Tasks)
+	m.undoStack = append(m.undoStack, snapshot)
+	if len(m.undoStack) > 50 {
+		m.undoStack = m.undoStack[1:]
+	}
+	m.redoStack = nil
+	return m
 }
 
 // New creates a Model loaded from local storage.
@@ -180,6 +200,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.doc.Tasks) == 0 {
 			return m, nil
 		}
+		m = m.withUndo()
 		t := &m.doc.Tasks[m.cursor]
 		t.Status = model.NextStatus(t.Status)
 		t.UpdatedAt = time.Now()
@@ -190,6 +211,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "nothing to prioritize"
 			return m, nil
 		}
+		m = m.withUndo()
 		t := &m.doc.Tasks[m.cursor]
 		t.Priority = model.NextPriority(t.Priority)
 		t.UpdatedAt = time.Now()
@@ -205,6 +227,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.cursor > 0 {
+			m = m.withUndo()
 			m.doc.Tasks[m.cursor], m.doc.Tasks[m.cursor-1] = m.doc.Tasks[m.cursor-1], m.doc.Tasks[m.cursor]
 			m.cursor--
 			m.status = "task moved up"
@@ -218,6 +241,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.cursor < len(m.doc.Tasks)-1 {
+			m = m.withUndo()
 			m.doc.Tasks[m.cursor], m.doc.Tasks[m.cursor+1] = m.doc.Tasks[m.cursor+1], m.doc.Tasks[m.cursor]
 			m.cursor++
 			m.status = "task moved down"
@@ -226,8 +250,59 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = "already at bottom"
 		return m, nil
 
+	case key.Matches(msg, m.keys.Undo):
+		if len(m.undoStack) == 0 {
+			m.status = "nothing to undo"
+			return m, nil
+		}
+		current := make([]model.Task, len(m.doc.Tasks))
+		copy(current, m.doc.Tasks)
+		m.redoStack = append(m.redoStack, current)
+
+		last := m.undoStack[len(m.undoStack)-1]
+		m.undoStack = m.undoStack[:len(m.undoStack)-1]
+		m.doc.Tasks = last
+
+		if m.cursor >= len(m.doc.Tasks) && m.cursor > 0 {
+			m.cursor = len(m.doc.Tasks) - 1
+		}
+		m.status = "action undone"
+		return m, m.persist()
+
+	case key.Matches(msg, m.keys.Redo):
+		if len(m.redoStack) == 0 {
+			m.status = "nothing to redo"
+			return m, nil
+		}
+		current := make([]model.Task, len(m.doc.Tasks))
+		copy(current, m.doc.Tasks)
+		m.undoStack = append(m.undoStack, current)
+
+		next := m.redoStack[len(m.redoStack)-1]
+		m.redoStack = m.redoStack[:len(m.redoStack)-1]
+		m.doc.Tasks = next
+
+		if m.cursor >= len(m.doc.Tasks) && m.cursor > 0 {
+			m.cursor = len(m.doc.Tasks) - 1
+		}
+		m.status = "action redone"
+		return m, m.persist()
+
+	case key.Matches(msg, m.keys.Copy):
+		if len(m.doc.Tasks) == 0 {
+			m.status = "nothing to copy"
+			return m, nil
+		}
+		md := model.ExportMarkdown(m.doc)
+		if err := clipboard.WriteAll(md); err != nil {
+			m.status = "clipboard copy failed"
+			return m, nil
+		}
+		m.status = "copied markdown to clipboard"
+		return m, nil
+
 	case key.Matches(msg, m.keys.Help):
-		m.status = "a add · e edit · d delete · p priority · J/K reorder · ↵ cycle · j/k move · q quit"
+		m.status = "a add · e edit · d del · p prio · J/K move · u undo · c copy · ↵ cycle · q quit"
 	}
 	return m, nil
 }
@@ -247,6 +322,7 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		m = m.withUndo()
 		now := time.Now()
 		if m.mode == ModeAdd {
 			m.doc.Tasks = append(m.doc.Tasks, model.Task{
@@ -278,6 +354,7 @@ func (m Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch strings.ToLower(msg.String()) {
 	case "y":
 		if len(m.doc.Tasks) > 0 {
+			m = m.withUndo()
 			idx := m.cursor
 			m.doc.Tasks = append(m.doc.Tasks[:idx], m.doc.Tasks[idx+1:]...)
 			if m.cursor >= len(m.doc.Tasks) && m.cursor > 0 {

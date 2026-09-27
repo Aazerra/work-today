@@ -1,6 +1,10 @@
 package model
 
-import "time"
+import (
+	"fmt"
+	"strings"
+	"time"
+)
 
 // Task status constants.
 const (
@@ -99,4 +103,61 @@ func PriorityLabel(priority string) string {
 	default:
 		return ""
 	}
+}
+
+// ParsePriority normalizes a priority string (e.g. "h", "high", "M", "med") to a valid priority constant.
+func ParsePriority(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "h", "high", "1":
+		return PriorityHigh
+	case "m", "med", "medium", "2":
+		return PriorityMedium
+	case "l", "low", "3":
+		return PriorityLow
+	default:
+		return PriorityNone
+	}
+}
+
+// ExportMarkdown formats a document's tasks as a clean Markdown checklist.
+func ExportMarkdown(doc *Document) string {
+	if doc == nil {
+		return ""
+	}
+	dateStr := doc.Date
+	if parsed, err := time.Parse("2006-01-02", doc.Date); err == nil {
+		dateStr = parsed.Format("Mon, 02 Jan 2006")
+	}
+
+	done, total := 0, len(doc.Tasks)
+	for _, t := range doc.Tasks {
+		if t.Status == StatusDone {
+			done++
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("## Work Today (%s) · %d/%d done\n\n", dateStr, done, total))
+	if len(doc.Tasks) == 0 {
+		sb.WriteString("_No tasks for today._\n")
+		return sb.String()
+	}
+
+	for _, t := range doc.Tasks {
+		glyph := "[ ]"
+		switch t.Status {
+		case StatusInProgress:
+			glyph = "[~]"
+		case StatusDone:
+			glyph = "[x]"
+		}
+
+		pBadge := ""
+		if t.Priority != "" {
+			pBadge = fmt.Sprintf("[%s] ", PriorityLabel(t.Priority))
+		}
+
+		sb.WriteString(fmt.Sprintf("- %s %s%s\n", glyph, pBadge, t.Title))
+	}
+	return sb.String()
 }
