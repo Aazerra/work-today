@@ -126,6 +126,96 @@ func TestCliExport(t *testing.T) {
 	}
 }
 
+func TestCliTagsAndFiltering(t *testing.T) {
+	setupTestStorage(t)
+
+	var out, errOut bytes.Buffer
+
+	// Add tasks with inline tags and contexts
+	_ = cli.RunWithIO([]string{"add", "Fix backend bug +auth @work"}, &out, &errOut)
+	_ = cli.RunWithIO([]string{"add", "Buy groceries @home +errands"}, &out, &errOut)
+	_ = cli.RunWithIO([]string{"add", "-t", "auth", "-c", "work", "Code review"}, &out, &errOut)
+
+	// Filter by tag +auth
+	out.Reset()
+	err := cli.RunWithIO([]string{"list", "+auth"}, &out, &errOut)
+	if err != nil {
+		t.Fatalf("list +auth: %v", err)
+	}
+	res := out.String()
+	if !strings.Contains(res, "Fix backend bug") || !strings.Contains(res, "Code review") {
+		t.Fatalf("expected auth tasks in list: %s", res)
+	}
+	if strings.Contains(res, "Buy groceries") {
+		t.Fatalf("unexpected task in auth list: %s", res)
+	}
+
+	// Filter by context @home
+	out.Reset()
+	err = cli.RunWithIO([]string{"list", "@home"}, &out, &errOut)
+	if err != nil {
+		t.Fatalf("list @home: %v", err)
+	}
+	res = out.String()
+	if !strings.Contains(res, "Buy groceries") {
+		t.Fatalf("expected groceries in home list: %s", res)
+	}
+	if strings.Contains(res, "Fix backend bug") {
+		t.Fatalf("unexpected task in home list: %s", res)
+	}
+}
+
+func TestCliHistoryAndClear(t *testing.T) {
+	setupTestStorage(t)
+
+	var out, errOut bytes.Buffer
+
+	_ = cli.RunWithIO([]string{"add", "Task to finish"}, &out, &errOut)
+	_ = cli.RunWithIO([]string{"done", "1"}, &out, &errOut)
+
+	// Clear completed tasks
+	out.Reset()
+	err := cli.RunWithIO([]string{"clear"}, &out, &errOut)
+	if err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if !strings.Contains(out.String(), "Cleared 1 completed task(s) to archive") {
+		t.Fatalf("unexpected clear output: %s", out.String())
+	}
+
+	// View history
+	out.Reset()
+	err = cli.RunWithIO([]string{"history"}, &out, &errOut)
+	if err != nil {
+		t.Fatalf("history: %v", err)
+	}
+	if !strings.Contains(out.String(), "Task to finish") {
+		t.Fatalf("expected finished task in history: %s", out.String())
+	}
+}
+
+func TestCliStats(t *testing.T) {
+	setupTestStorage(t)
+
+	var out, errOut bytes.Buffer
+
+	_ = cli.RunWithIO([]string{"add", "Task +dev @office"}, &out, &errOut)
+	_ = cli.RunWithIO([]string{"done", "1"}, &out, &errOut)
+
+	out.Reset()
+	err := cli.RunWithIO([]string{"stats"}, &out, &errOut)
+	if err != nil {
+		t.Fatalf("stats: %v", err)
+	}
+	statsOut := out.String()
+	if !strings.Contains(statsOut, "Productivity Stats") {
+		t.Fatalf("expected Productivity Stats in output: %s", statsOut)
+	}
+	if !strings.Contains(statsOut, "+dev") || !strings.Contains(statsOut, "@office") {
+		t.Fatalf("expected tags and contexts in stats output: %s", statsOut)
+	}
+}
+
 func TestCliErrors(t *testing.T) {
 	setupTestStorage(t)
 

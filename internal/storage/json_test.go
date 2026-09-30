@@ -254,3 +254,119 @@ func TestLoadMissingFile(t *testing.T) {
 		t.Fatalf("unexpected empty doc: %+v", got)
 	}
 }
+
+func TestRolloverArchivesCompletedTasks(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("WORK_TODAY_PATH", "")
+
+	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+	doc := &model.Document{
+		Date: yesterday,
+		Tasks: []model.Task{
+			{ID: "1", Title: "open task", Status: model.StatusTodo},
+			{ID: "2", Title: "finished task", Status: model.StatusDone},
+		},
+	}
+	if err := storage.Save(doc); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	_, err := storage.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	archives, err := storage.LoadArchives(0)
+	if err != nil {
+		t.Fatalf("LoadArchives: %v", err)
+	}
+	if len(archives) != 1 {
+		t.Fatalf("expected 1 archive file, got %d", len(archives))
+	}
+	if archives[0].Date != yesterday {
+		t.Fatalf("expected archive date %s, got %s", yesterday, archives[0].Date)
+	}
+	if len(archives[0].Tasks) != 1 || archives[0].Tasks[0].Title != "finished task" {
+		t.Fatalf("unexpected archived tasks: %+v", archives[0].Tasks)
+	}
+}
+
+func TestClearCompleted(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("WORK_TODAY_PATH", "")
+
+	now := time.Now().Format("2006-01-02")
+	doc := &model.Document{
+		Date: now,
+		Tasks: []model.Task{
+			{ID: "1", Title: "Todo task", Status: model.StatusTodo},
+			{ID: "2", Title: "Done task", Status: model.StatusDone},
+		},
+	}
+	if err := storage.Save(doc); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	cleared, err := storage.ClearCompleted()
+	if err != nil {
+		t.Fatalf("ClearCompleted: %v", err)
+	}
+	if len(cleared) != 1 || cleared[0].Title != "Done task" {
+		t.Fatalf("expected 1 cleared task, got %+v", cleared)
+	}
+
+	active, err := storage.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(active.Tasks) != 1 || active.Tasks[0].Title != "Todo task" {
+		t.Fatalf("expected only Todo task remaining in active list, got %+v", active.Tasks)
+	}
+
+	archives, err := storage.LoadArchives(0)
+	if err != nil {
+		t.Fatalf("LoadArchives: %v", err)
+	}
+	if len(archives) != 1 || len(archives[0].Tasks) != 1 {
+		t.Fatalf("expected 1 task in archive, got %+v", archives)
+	}
+}
+
+func TestCalculateStreak(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("WORK_TODAY_PATH", "")
+
+	now := time.Now()
+	yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
+	twoDaysAgo := now.AddDate(0, 0, -2).Format("2006-01-02")
+
+	// Archive yesterday and 2 days ago
+	_ = storage.ArchiveTasks(yesterday, []model.Task{{ID: "y1", Title: "Done yesterday", Status: model.StatusDone}})
+	_ = storage.ArchiveTasks(twoDaysAgo, []model.Task{{ID: "y2", Title: "Done 2 days ago", Status: model.StatusDone}})
+
+	// No tasks completed today yet -> ongoing streak is 2 (from yesterday and day before)
+	streak := storage.CalculateStreak()
+	if streak != 2 {
+		t.Fatalf("expected ongoing streak 2, got %d", streak)
+	}
+
+	// Complete a task today -> streak becomes 3
+	todayDoc := &model.Document{
+		Date: now.Format("2006-01-02"),
+		Tasks: []model.Task{
+			{ID: "t1", Title: "Done today", Status: model.StatusDone},
+		},
+	}
+	_ = storage.Save(todayDoc)
+
+	streak = storage.CalculateStreak()
+	if streak != 3 {
+		t.Fatalf("expected streak 3, got %d", streak)
+	}
+}

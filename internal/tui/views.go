@@ -22,6 +22,8 @@ var (
 	colorPriorityHigh   = lipgloss.Color("196")
 	colorPriorityMedium = lipgloss.Color("214")
 	colorPriorityLow    = lipgloss.Color("75")
+	colorTag            = lipgloss.Color("141") // soft purple
+	colorContext        = lipgloss.Color("43")  // teal / cyan
 
 	priorityHighStyle = lipgloss.NewStyle().
 				Foreground(colorPriorityHigh).
@@ -32,6 +34,12 @@ var (
 
 	priorityLowStyle = lipgloss.NewStyle().
 				Foreground(colorPriorityLow)
+
+	tagStyle = lipgloss.NewStyle().
+			Foreground(colorTag)
+
+	contextStyle = lipgloss.NewStyle().
+			Foreground(colorContext)
 
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -142,9 +150,23 @@ func (m Model) renderHeader() string {
 		}
 	}
 
+	streak := m.streak
+	if streak == 0 {
+		streak = storage.CalculateStreak()
+	}
+	streakStr := ""
+	if streak > 0 {
+		streakStr = fmt.Sprintf("  ·  🔥 %d day streak", streak)
+	}
+
+	filterStr := ""
+	if m.filter != "" {
+		filterStr = fmt.Sprintf("  ·  filter: %q", m.filter)
+	}
+
 	title := titleStyle.Render("work today")
-	meta := subtitleStyle.Render(fmt.Sprintf("%s  ·  %d/%d done  ·  %s",
-		date, done, total, storage.Path()))
+	meta := subtitleStyle.Render(fmt.Sprintf("%s  ·  %d/%d done%s%s  ·  %s",
+		date, done, total, streakStr, filterStr, storage.Path()))
 
 	return headerStyle.Render(
 		lipgloss.JoinVertical(lipgloss.Left, title, meta),
@@ -159,7 +181,7 @@ func (m Model) renderBody() string {
 		box := promptBoxStyle.Render(
 			lipgloss.JoinVertical(
 				lipgloss.Left,
-				promptLabelStyle.Render("Add task"),
+				promptLabelStyle.Render("Add task (+tag, @context supported)"),
 				m.input.View(),
 			),
 		)
@@ -173,10 +195,20 @@ func (m Model) renderBody() string {
 			),
 		)
 		return lipgloss.JoinVertical(lipgloss.Left, list, box)
+	case ModeFilter:
+		box := promptBoxStyle.Render(
+			lipgloss.JoinVertical(
+				lipgloss.Left,
+				promptLabelStyle.Render("Filter tasks (enter apply · esc clear)"),
+				m.input.View(),
+			),
+		)
+		return lipgloss.JoinVertical(lipgloss.Left, list, box)
 	case ModeConfirmDelete:
 		title := ""
-		if len(m.doc.Tasks) > 0 {
-			title = m.doc.Tasks[m.cursor].Title
+		visible := m.visibleIndices()
+		if len(visible) > 0 && m.cursor < len(visible) {
+			title = m.doc.Tasks[visible[m.cursor]].Title
 		}
 		msg := listStyle.Render(dangerStyle.Render(fmt.Sprintf("Delete %q? (y/n)", title)))
 		return lipgloss.JoinVertical(lipgloss.Left, list, msg)
@@ -186,13 +218,17 @@ func (m Model) renderBody() string {
 }
 
 func (m Model) renderTaskList() string {
-	if len(m.doc.Tasks) == 0 {
+	visible := m.visibleIndices()
+	if len(visible) == 0 {
+		if m.filter != "" {
+			return emptyStyle.Render(fmt.Sprintf("No tasks matching %q. Press esc to clear filter.", m.filter))
+		}
 		return emptyStyle.Render("No tasks yet. Press a to add one.")
 	}
 
-	lines := make([]string, 0, len(m.doc.Tasks))
-	for i, t := range m.doc.Tasks {
-		lines = append(lines, m.renderTaskRow(i, t))
+	lines := make([]string, 0, len(visible))
+	for displayIdx, realIdx := range visible {
+		lines = append(lines, m.renderTaskRow(displayIdx, m.doc.Tasks[realIdx]))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -219,25 +255,94 @@ func renderPriorityBadge(priority string, done bool) string {
 	return style.Render(fmt.Sprintf("[%s]", model.PriorityLabel(priority))) + " "
 }
 
-func (m Model) renderTaskRow(i int, t model.Task) string {
-	var glyphStyle, labelStyle, titleStyle lipgloss.Style
+func renderTaskTitle(t model.Task) string {
+	isDone := t.Status == model.StatusDone
+	var baseTitleStyle lipgloss.Style
 	switch t.Status {
 	case model.StatusInProgress:
-		glyphStyle, labelStyle, titleStyle = doingGlyphStyle, doingLabelStyle, doingTitleStyle
+		baseTitleStyle = doingTitleStyle
 	case model.StatusDone:
-		glyphStyle, labelStyle, titleStyle = doneGlyphStyle, doneLabelStyle, doneTitleStyle
+		baseTitleStyle = doneTitleStyle
 	default:
-		glyphStyle, labelStyle, titleStyle = todoGlyphStyle, todoLabelStyle, todoTitleStyle
+		baseTitleStyle = todoTitleStyle
+	}
+
+	if isDone {
+		res := baseTitleStyle.Render(t.Title)
+		titleLower := strings.ToLower(t.Title)
+		var extras []string
+		for _, tag := range t.Tags {
+			if !strings.Contains(titleLower, "+"+tag) && !strings.Contains(titleLower, "#"+tag) {
+				extras = append(extras, baseTitleStyle.Render("+"+tag))
+			}
+		}
+		for _, ctx := range t.Contexts {
+			if !strings.Contains(titleLower, "@"+ctx) {
+				extras = append(extras, baseTitleStyle.Render("@"+ctx))
+			}
+		}
+		if len(extras) > 0 {
+			res += " " + strings.Join(extras, " ")
+		}
+		return res
+	}
+
+	words := strings.Split(t.Title, " ")
+	renderedWords := make([]string, len(words))
+	for i, w := range words {
+		clean := strings.TrimRight(w, ",.;:!?)]}\"'")
+		punct := w[len(clean):]
+		if len(clean) > 1 {
+			if clean[0] == '+' || clean[0] == '#' {
+				renderedWords[i] = tagStyle.Render(clean) + baseTitleStyle.Render(punct)
+				continue
+			} else if clean[0] == '@' {
+				renderedWords[i] = contextStyle.Render(clean) + baseTitleStyle.Render(punct)
+				continue
+			}
+		}
+		renderedWords[i] = baseTitleStyle.Render(w)
+	}
+
+	res := strings.Join(renderedWords, " ")
+
+	titleLower := strings.ToLower(t.Title)
+	var extras []string
+	for _, tag := range t.Tags {
+		if !strings.Contains(titleLower, "+"+tag) && !strings.Contains(titleLower, "#"+tag) {
+			extras = append(extras, tagStyle.Render("+"+tag))
+		}
+	}
+	for _, ctx := range t.Contexts {
+		if !strings.Contains(titleLower, "@"+ctx) {
+			extras = append(extras, contextStyle.Render("@"+ctx))
+		}
+	}
+	if len(extras) > 0 {
+		res += " " + strings.Join(extras, " ")
+	}
+
+	return res
+}
+
+func (m Model) renderTaskRow(displayIdx int, t model.Task) string {
+	var glyphStyle, labelStyle lipgloss.Style
+	switch t.Status {
+	case model.StatusInProgress:
+		glyphStyle, labelStyle = doingGlyphStyle, doingLabelStyle
+	case model.StatusDone:
+		glyphStyle, labelStyle = doneGlyphStyle, doneLabelStyle
+	default:
+		glyphStyle, labelStyle = todoGlyphStyle, todoLabelStyle
 	}
 
 	cursor := "  "
-	if i == m.cursor {
+	if displayIdx == m.cursor {
 		cursor = cursorMarkStyle.Render("› ")
-	} else {
-		cursor = "  "
 	}
 
 	pBadge := renderPriorityBadge(t.Priority, t.Status == model.StatusDone)
+	title := renderTaskTitle(t)
 
 	return lipgloss.JoinHorizontal(
 		lipgloss.Top,
@@ -247,16 +352,18 @@ func (m Model) renderTaskRow(i int, t model.Task) string {
 		labelStyle.Render(model.StatusLabel(t.Status)),
 		"  ",
 		pBadge,
-		titleStyle.Render(t.Title),
+		title,
 	)
 }
 
 func (m Model) renderFooter() string {
-	help := "a add · e edit · d del · p prio · J/K move · u undo · c copy · ↵ cycle · j/k nav · q quit"
+	help := "a add · e edit · d del · p prio · J/K move · / filter · C clear · u undo · c copy · ↵ cycle · j/k nav · q quit"
 	if m.mode == ModeAdd || m.mode == ModeEdit {
 		help = "enter confirm · esc cancel"
 	} else if m.mode == ModeConfirmDelete {
 		help = "y confirm · n/esc cancel"
+	} else if m.mode == ModeFilter {
+		help = "enter apply · esc clear"
 	}
 
 	parts := []string{helpStyle.Render(help)}

@@ -33,6 +33,8 @@ type Task struct {
 	Title     string    `json:"title"`
 	Status    string    `json:"status"`
 	Priority  string    `json:"priority,omitempty"`
+	Tags      []string  `json:"tags,omitempty"`
+	Contexts  []string  `json:"contexts,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -160,4 +162,98 @@ func ExportMarkdown(doc *Document) string {
 		sb.WriteString(fmt.Sprintf("- %s %s%s\n", glyph, pBadge, t.Title))
 	}
 	return sb.String()
+}
+
+// ExtractTagsAndContexts inspects a string and extracts all +project/#tag tags and @context contexts.
+func ExtractTagsAndContexts(s string) (tags []string, contexts []string) {
+	seenTags := make(map[string]bool)
+	seenCtx := make(map[string]bool)
+
+	for _, word := range strings.Fields(s) {
+		clean := strings.TrimRight(word, ",.;:!?)]}\"'")
+		if len(clean) > 1 {
+			if clean[0] == '+' || clean[0] == '#' {
+				tag := strings.ToLower(clean[1:])
+				if tag != "" && !seenTags[tag] {
+					seenTags[tag] = true
+					tags = append(tags, tag)
+				}
+			} else if clean[0] == '@' {
+				ctx := strings.ToLower(clean[1:])
+				if ctx != "" && !seenCtx[ctx] {
+					seenCtx[ctx] = true
+					contexts = append(contexts, ctx)
+				}
+			}
+		}
+	}
+	return tags, contexts
+}
+
+// Normalize ensures tags and contexts embedded in the title are extracted into the Task's metadata slices.
+func (t *Task) Normalize() {
+	titleTags, titleCtx := ExtractTagsAndContexts(t.Title)
+	seenTags := make(map[string]bool)
+	for _, tag := range t.Tags {
+		clean := strings.ToLower(strings.TrimSpace(tag))
+		if clean != "" {
+			seenTags[clean] = true
+		}
+	}
+	for _, tag := range titleTags {
+		if !seenTags[tag] {
+			t.Tags = append(t.Tags, tag)
+			seenTags[tag] = true
+		}
+	}
+
+	seenCtx := make(map[string]bool)
+	for _, c := range t.Contexts {
+		clean := strings.ToLower(strings.TrimSpace(c))
+		if clean != "" {
+			seenCtx[clean] = true
+		}
+	}
+	for _, c := range titleCtx {
+		if !seenCtx[c] {
+			t.Contexts = append(t.Contexts, c)
+			seenCtx[c] = true
+		}
+	}
+}
+
+// MatchesFilter checks whether a task matches a search or tag/context query.
+func (t Task) MatchesFilter(query string) bool {
+	q := strings.TrimSpace(strings.ToLower(query))
+	if q == "" {
+		return true
+	}
+
+	titleLower := strings.ToLower(t.Title)
+	if strings.Contains(titleLower, q) {
+		return true
+	}
+
+	// Match tag prefix e.g. "+backend" or "backend"
+	tagQuery := strings.TrimPrefix(strings.TrimPrefix(q, "+"), "#")
+	for _, tag := range t.Tags {
+		if strings.Contains(tag, tagQuery) {
+			return true
+		}
+	}
+
+	// Match context prefix e.g. "@work" or "work"
+	ctxQuery := strings.TrimPrefix(q, "@")
+	for _, ctx := range t.Contexts {
+		if strings.Contains(ctx, ctxQuery) {
+			return true
+		}
+	}
+
+	// Match priority
+	if t.Priority != "" && strings.Contains(strings.ToLower(t.Priority), q) {
+		return true
+	}
+
+	return false
 }

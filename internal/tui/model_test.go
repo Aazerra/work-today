@@ -2,6 +2,7 @@ package tui_test
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -225,5 +226,100 @@ func TestUndoAndRedo(t *testing.T) {
 	}
 	if doc.Tasks[0].Status != model.StatusTodo {
 		t.Fatalf("expected StatusTodo restored, got %s", doc.Tasks[0].Status)
+	}
+}
+
+func typeString(m tea.Model, s string) tea.Model {
+	for _, r := range s {
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	return m
+}
+
+func TestFilterMode(t *testing.T) {
+	now := time.Now()
+	t1 := model.Task{ID: "1", Title: "Fix backend bug +auth @work", Status: model.StatusTodo, CreatedAt: now, UpdatedAt: now}
+	t1.Normalize()
+	t2 := model.Task{ID: "2", Title: "Design landing page +design @home", Status: model.StatusTodo, CreatedAt: now, UpdatedAt: now}
+	t2.Normalize()
+	tasks := []model.Task{t1, t2}
+
+	m := setupTestModel(t, tasks)
+
+	// Press '/' to enter filter mode
+	m = sendKey(m, "/").(tui.Model)
+
+	// Type "+auth" and press Enter
+	m = typeString(m, "+auth").(tui.Model)
+	m = sendKey(m, "enter").(tui.Model)
+
+	view := m.View()
+	if !strings.Contains(view, "Fix backend bug") {
+		t.Fatalf("expected view to contain filtered task 'Fix backend bug', got:\n%s", view)
+	}
+	if strings.Contains(view, "Design landing page") {
+		t.Fatalf("expected view NOT to contain 'Design landing page', got:\n%s", view)
+	}
+
+	// Press 'esc' to clear filter
+	m = sendKey(m, "esc").(tui.Model)
+	view = m.View()
+	if !strings.Contains(view, "Fix backend bug") || !strings.Contains(view, "Design landing page") {
+		t.Fatalf("expected both tasks to be visible after clearing filter, got:\n%s", view)
+	}
+}
+
+func TestClearCompleted(t *testing.T) {
+	now := time.Now()
+	tasks := []model.Task{
+		{ID: "1", Title: "Task 1 Done", Status: model.StatusDone, CreatedAt: now, UpdatedAt: now},
+		{ID: "2", Title: "Task 2 Pending", Status: model.StatusTodo, CreatedAt: now, UpdatedAt: now},
+	}
+
+	m := setupTestModel(t, tasks)
+
+	// Press 'C' to clear completed
+	m = sendKey(m, "C").(tui.Model)
+
+	doc, err := storage.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(doc.Tasks) != 1 || doc.Tasks[0].Title != "Task 2 Pending" {
+		t.Fatalf("expected only pending task remaining, got %+v", doc.Tasks)
+	}
+
+	// Verify archived
+	archives, err := storage.LoadArchives(10)
+	if err != nil {
+		t.Fatalf("load archives: %v", err)
+	}
+	if len(archives) == 0 || len(archives[0].Tasks) != 1 || archives[0].Tasks[0].Title != "Task 1 Done" {
+		t.Fatalf("expected Task 1 Done in archives, got %+v", archives)
+	}
+
+	// Undo clear ('u')
+	m = sendKey(m, "u").(tui.Model)
+	doc, err = storage.Load()
+	if err != nil {
+		t.Fatalf("load after undo: %v", err)
+	}
+	if len(doc.Tasks) != 2 {
+		t.Fatalf("expected 2 tasks restored on undo, got %d", len(doc.Tasks))
+	}
+}
+
+func TestStreakDisplay(t *testing.T) {
+	now := time.Now()
+	tasks := []model.Task{
+		{ID: "1", Title: "Today Task", Status: model.StatusDone, CreatedAt: now, UpdatedAt: now},
+	}
+
+	m := setupTestModel(t, tasks)
+
+	// Streak should be 1 day streak
+	view := m.View()
+	if !strings.Contains(view, "1 day streak") {
+		t.Fatalf("expected view to contain streak indicator '1 day streak', got:\n%s", view)
 	}
 }

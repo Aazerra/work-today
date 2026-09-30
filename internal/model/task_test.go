@@ -111,3 +111,78 @@ func TestExportMarkdown(t *testing.T) {
 		t.Fatalf("expected empty message: %s", emptyOut)
 	}
 }
+
+func TestExtractTagsAndContexts(t *testing.T) {
+	title := "Review PR #42 for +auth and +backend, then call @client and check @home."
+	tags, contexts := model.ExtractTagsAndContexts(title)
+
+	expectedTags := map[string]bool{"42": true, "auth": true, "backend": true}
+	expectedCtx := map[string]bool{"client": true, "home": true}
+
+	if len(tags) != len(expectedTags) {
+		t.Fatalf("expected %d tags, got %d (%v)", len(expectedTags), len(tags), tags)
+	}
+	for _, tag := range tags {
+		if !expectedTags[tag] {
+			t.Fatalf("unexpected tag %q", tag)
+		}
+	}
+
+	if len(contexts) != len(expectedCtx) {
+		t.Fatalf("expected %d contexts, got %d (%v)", len(expectedCtx), len(contexts), contexts)
+	}
+	for _, ctx := range contexts {
+		if !expectedCtx[ctx] {
+			t.Fatalf("unexpected context %q", ctx)
+		}
+	}
+}
+
+func TestTaskNormalize(t *testing.T) {
+	task := model.Task{
+		Title: "Ship release +v2 @work",
+		Tags:  []string{"release"},
+	}
+	task.Normalize()
+
+	if len(task.Tags) != 2 {
+		t.Fatalf("expected 2 tags, got %v", task.Tags)
+	}
+	if len(task.Contexts) != 1 || task.Contexts[0] != "work" {
+		t.Fatalf("expected context 'work', got %v", task.Contexts)
+	}
+}
+
+func TestMatchesFilter(t *testing.T) {
+	task := model.Task{
+		Title:    "Write integration tests for auth",
+		Priority: model.PriorityHigh,
+		Tags:     []string{"backend", "api"},
+		Contexts: []string{"work"},
+	}
+
+	cases := []struct {
+		query string
+		want  bool
+	}{
+		{"", true},
+		{"tests", true},
+		{"TESTS", true},
+		{"backend", true},
+		{"+backend", true},
+		{"api", true},
+		{"#api", true},
+		{"work", true},
+		{"@work", true},
+		{"high", true},
+		{"frontend", false},
+		{"@home", false},
+		{"low", false},
+	}
+
+	for _, tc := range cases {
+		if got := task.MatchesFilter(tc.query); got != tc.want {
+			t.Fatalf("MatchesFilter(%q)=%v, want %v", tc.query, got, tc.want)
+		}
+	}
+}
