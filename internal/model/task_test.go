@@ -186,3 +186,50 @@ func TestMatchesFilter(t *testing.T) {
 		}
 	}
 }
+
+func TestSubtasks(t *testing.T) {
+	task := model.Task{
+		Title: "Main Task",
+		Subtasks: []model.Subtask{
+			{Title: "Subtask 1", Done: true},
+			{Title: "Subtask 2", Done: false},
+			{Title: "Subtask 3", Done: true},
+		},
+	}
+
+	done, total := task.SubtaskProgress()
+	if done != 2 || total != 3 {
+		t.Fatalf("expected 2/3 done, got %d/%d", done, total)
+	}
+
+	if !task.MatchesFilter("subtask 2") {
+		t.Fatalf("expected MatchesFilter to match subtask title")
+	}
+}
+
+func TestExportMarkdownWithSubtasks(t *testing.T) {
+	doc := &model.Document{
+		Date: "2026-09-30",
+		Tasks: []model.Task{
+			{
+				Title:  "Parent Task",
+				Status: model.StatusTodo,
+				Subtasks: []model.Subtask{
+					{Title: "Child 1", Done: true},
+					{Title: "Child 2", Done: false},
+				},
+			},
+		},
+	}
+
+	out := model.ExportMarkdown(doc)
+	if !strings.Contains(out, "- [ ] Parent Task") {
+		t.Fatalf("expected parent task in output: %s", out)
+	}
+	if !strings.Contains(out, "  - [x] Child 1") {
+		t.Fatalf("expected completed child task in output: %s", out)
+	}
+	if !strings.Contains(out, "  - [ ] Child 2") {
+		t.Fatalf("expected uncompleted child task in output: %s", out)
+	}
+}

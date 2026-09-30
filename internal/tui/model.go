@@ -22,12 +22,21 @@ const (
 	ModeList Mode = iota
 	ModeAdd
 	ModeEdit
+	ModeAddSubtask
+	ModeEditSubtask
 	ModeConfirmDelete
+	ModeConfirmDeleteSubtask
 	ModeFilter
 )
 
 type errMsg struct{ err error }
 type savedMsg struct{}
+
+// ItemRef identifies an item currently visible in the tree (parent Task or child Subtask).
+type ItemRef struct {
+	TaskIndex    int
+	SubtaskIndex int // -1 for parent task, >= 0 for subtask
+}
 
 // Model is the Bubble Tea application state.
 type Model struct {
@@ -40,6 +49,7 @@ type Model struct {
 	filter    string
 	status    string
 	streak    int
+	collapsed map[string]bool
 	width     int
 	height    int
 	quitting  bool
@@ -52,6 +62,8 @@ type keyMap struct {
 	MoveUp    key.Binding
 	MoveDown  key.Binding
 	Add       key.Binding
+	AddSub    key.Binding
+	Collapse  key.Binding
 	Edit      key.Binding
 	Delete    key.Binding
 	Toggle    key.Binding
@@ -72,9 +84,11 @@ func defaultKeys() keyMap {
 		MoveUp:    key.NewBinding(key.WithKeys("K", "shift+up"), key.WithHelp("K", "move up")),
 		MoveDown:  key.NewBinding(key.WithKeys("J", "shift+down"), key.WithHelp("J", "move down")),
 		Add:       key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "add")),
+		AddSub:    key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "add subtask")),
+		Collapse:  key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "fold/unfold")),
 		Edit:      key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "edit")),
 		Delete:    key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
-		Toggle:    key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("↵/space", "cycle status")),
+		Toggle:    key.NewBinding(key.WithKeys("enter", " "), key.WithHelp("↵/space", "toggle")),
 		Priority:  key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "priority")),
 		Filter:    key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
 		ClearDone: key.NewBinding(key.WithKeys("C"), key.WithHelp("C", "clear completed")),
@@ -84,6 +98,26 @@ func defaultKeys() keyMap {
 		Quit:      key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 		Help:      key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
 	}
+}
+
+func cloneTasks(tasks []model.Task) []model.Task {
+	res := make([]model.Task, len(tasks))
+	for i, t := range tasks {
+		res[i] = t
+		if len(t.Tags) > 0 {
+			res[i].Tags = make([]string, len(t.Tags))
+			copy(res[i].Tags, t.Tags)
+		}
+		if len(t.Contexts) > 0 {
+			res[i].Contexts = make([]string, len(t.Contexts))
+			copy(res[i].Contexts, t.Contexts)
+		}
+		if len(t.Subtasks) > 0 {
+			res[i].Subtasks = make([]model.Subtask, len(t.Subtasks))
+			copy(res[i].Subtasks, t.Subtasks)
+		}
+	}
+	return res
 }
 
 func (m Model) visibleIndices() []int {
@@ -103,9 +137,26 @@ func (m Model) visibleIndices() []int {
 	return indices
 }
 
+func (m Model) visibleItems() []ItemRef {
+	var items []ItemRef
+	for i, t := range m.doc.Tasks {
+		if m.filter != "" && !t.MatchesFilter(m.filter) {
+			continue
+		}
+		items = append(items, ItemRef{TaskIndex: i, SubtaskIndex: -1})
+		if !m.collapsed[t.ID] {
+			for j, st := range t.Subtasks {
+				if m.filter == "" || strings.Contains(strings.ToLower(st.Title), strings.ToLower(m.filter)) || strings.Contains(strings.ToLower(t.Title), strings.ToLower(m.filter)) {
+					items = append(items, ItemRef{TaskIndex: i, SubtaskIndex: j})
+				}
+			}
+		}
+	}
+	return items
+}
+
 func (m Model) withUndo() Model {
-	snapshot := make([]model.Task, len(m.doc.Tasks))
-	copy(snapshot, m.doc.Tasks)
+	snapshot := cloneTasks(m.doc.Tasks)
 	m.undoStack = append(m.undoStack, snapshot)
 	if len(m.undoStack) > 50 {
 		m.undoStack = m.undoStack[1:]
@@ -128,15 +179,13 @@ func New() (Model, error) {
 	ti.Prompt = "› "
 
 	m := Model{
-		doc:    doc,
-		cursor: 0,
-		mode:   ModeList,
-		input:  ti,
-		keys:   defaultKeys(),
-		streak: storage.CalculateStreak(),
-	}
-	if len(doc.Tasks) > 0 {
-		m.cursor = 0
+		doc:       doc,
+		cursor:    0,
+		mode:      ModeList,
+		input:     ti,
+		collapsed: make(map[string]bool),
+		keys:      defaultKeys(),
+		streak:    storage.CalculateStreak(),
 	}
 	return m, nil
 }
@@ -163,9 +212,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch m.mode {
-		case ModeAdd, ModeEdit:
+		case ModeAdd, ModeEdit, ModeAddSubtask, ModeEditSubtask:
 			return m.updateInput(msg)
-		case ModeConfirmDelete:
+		case ModeConfirmDelete, ModeConfirmDeleteSubtask:
 			return m.updateConfirm(msg)
 		case ModeFilter:
 			return m.updateFilter(msg)
@@ -178,14 +227,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	visible := m.visibleIndices()
+	items := m.visibleItems()
 
 	switch {
 	case msg.Type == tea.KeyEsc && m.filter != "":
 		m.filter = ""
 		m.status = "filter cleared"
-		if m.cursor >= len(m.doc.Tasks) && m.cursor > 0 {
-			m.cursor = len(m.doc.Tasks) - 1
+		newItems := m.visibleItems()
+		if m.cursor >= len(newItems) && m.cursor > 0 {
+			m.cursor = len(newItems) - 1
 		}
 		return m, nil
 
@@ -199,9 +249,50 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case key.Matches(msg, m.keys.Down):
-		if m.cursor < len(visible)-1 {
+		if m.cursor < len(items)-1 {
 			m.cursor++
 		}
+
+	case key.Matches(msg, m.keys.Collapse):
+		if len(items) == 0 {
+			return m, nil
+		}
+		item := items[m.cursor]
+		parent := &m.doc.Tasks[item.TaskIndex]
+		if len(parent.Subtasks) == 0 {
+			m.status = "no subtasks to fold"
+			return m, nil
+		}
+		isCollapsed := m.collapsed[parent.ID]
+		m.collapsed[parent.ID] = !isCollapsed
+		if isCollapsed {
+			m.status = fmt.Sprintf("unfolded %q", parent.Title)
+		} else {
+			m.status = fmt.Sprintf("folded %q", parent.Title)
+		}
+		// place cursor on the parent task
+		newItems := m.visibleItems()
+		for idx, it := range newItems {
+			if it.TaskIndex == item.TaskIndex && it.SubtaskIndex == -1 {
+				m.cursor = idx
+				break
+			}
+		}
+		return m, nil
+
+	case key.Matches(msg, m.keys.AddSub):
+		if len(items) == 0 {
+			m.status = "no task to add subtask to"
+			return m, nil
+		}
+		item := items[m.cursor]
+		parent := m.doc.Tasks[item.TaskIndex]
+		m.mode = ModeAddSubtask
+		m.input.SetValue("")
+		m.input.Placeholder = fmt.Sprintf("Subtask for %q", parent.Title)
+		m.input.Focus()
+		m.status = ""
+		return m, textinput.Blink
 
 	case key.Matches(msg, m.keys.Filter):
 		m.mode = ModeFilter
@@ -236,8 +327,9 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.doc = doc
-		if m.cursor >= len(m.doc.Tasks) && m.cursor > 0 {
-			m.cursor = len(m.doc.Tasks) - 1
+		newItems := m.visibleItems()
+		if m.cursor >= len(newItems) && m.cursor > 0 {
+			m.cursor = len(newItems) - 1
 		}
 		m.status = fmt.Sprintf("cleared %d completed task(s) to archive", len(cleared))
 		m.streak = storage.CalculateStreak()
@@ -252,105 +344,174 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, textinput.Blink
 
 	case key.Matches(msg, m.keys.Edit):
-		if len(visible) == 0 {
+		if len(items) == 0 {
 			m.status = "nothing to edit"
 			return m, nil
 		}
-		realIdx := visible[m.cursor]
-		m.mode = ModeEdit
-		m.input.SetValue(m.doc.Tasks[realIdx].Title)
-		m.input.Placeholder = "Edit task title"
+		item := items[m.cursor]
+		if item.SubtaskIndex == -1 {
+			m.mode = ModeEdit
+			m.input.SetValue(m.doc.Tasks[item.TaskIndex].Title)
+			m.input.Placeholder = "Edit task title"
+		} else {
+			m.mode = ModeEditSubtask
+			m.input.SetValue(m.doc.Tasks[item.TaskIndex].Subtasks[item.SubtaskIndex].Title)
+			m.input.Placeholder = "Edit subtask title"
+		}
 		m.input.CursorEnd()
 		m.input.Focus()
 		m.status = ""
 		return m, textinput.Blink
 
 	case key.Matches(msg, m.keys.Delete):
-		if len(visible) == 0 {
+		if len(items) == 0 {
 			m.status = "nothing to delete"
 			return m, nil
 		}
-		m.mode = ModeConfirmDelete
+		item := items[m.cursor]
+		if item.SubtaskIndex == -1 {
+			m.mode = ModeConfirmDelete
+		} else {
+			m.mode = ModeConfirmDeleteSubtask
+		}
 		m.status = ""
 		return m, nil
 
 	case key.Matches(msg, m.keys.Toggle):
-		if len(visible) == 0 {
+		if len(items) == 0 {
 			return m, nil
 		}
-		realIdx := visible[m.cursor]
+		item := items[m.cursor]
 		m = m.withUndo()
-		t := &m.doc.Tasks[realIdx]
-		t.Status = model.NextStatus(t.Status)
-		t.UpdatedAt = time.Now()
+		parent := &m.doc.Tasks[item.TaskIndex]
+		if item.SubtaskIndex == -1 {
+			parent.Status = model.NextStatus(parent.Status)
+			parent.UpdatedAt = time.Now()
+		} else {
+			st := &parent.Subtasks[item.SubtaskIndex]
+			st.Done = !st.Done
+			st.UpdatedAt = time.Now()
+			parent.UpdatedAt = time.Now()
+		}
 		m.streak = storage.CalculateStreak()
 		return m, m.persist()
 
 	case key.Matches(msg, m.keys.Priority):
-		if len(visible) == 0 {
+		if len(items) == 0 {
 			m.status = "nothing to prioritize"
 			return m, nil
 		}
-		realIdx := visible[m.cursor]
+		item := items[m.cursor]
 		m = m.withUndo()
-		t := &m.doc.Tasks[realIdx]
-		t.Priority = model.NextPriority(t.Priority)
-		t.UpdatedAt = time.Now()
-		if t.Priority == model.PriorityNone {
+		parent := &m.doc.Tasks[item.TaskIndex]
+		parent.Priority = model.NextPriority(parent.Priority)
+		parent.UpdatedAt = time.Now()
+		if parent.Priority == model.PriorityNone {
 			m.status = "priority cleared"
 		} else {
-			m.status = fmt.Sprintf("priority: %s", model.PriorityLabel(t.Priority))
+			m.status = fmt.Sprintf("priority: %s", model.PriorityLabel(parent.Priority))
 		}
 		return m, m.persist()
 
 	case key.Matches(msg, m.keys.MoveUp):
-		if len(visible) == 0 {
+		if len(items) == 0 {
 			return m, nil
 		}
-		if m.cursor > 0 {
-			realIdx := visible[m.cursor]
-			prevIdx := visible[m.cursor-1]
-			m = m.withUndo()
-			m.doc.Tasks[realIdx], m.doc.Tasks[prevIdx] = m.doc.Tasks[prevIdx], m.doc.Tasks[realIdx]
-			m.cursor--
-			m.status = "task moved up"
-			return m, m.persist()
+		item := items[m.cursor]
+		if item.SubtaskIndex == -1 {
+			if item.TaskIndex > 0 {
+				m = m.withUndo()
+				prevTaskIdx := item.TaskIndex - 1
+				m.doc.Tasks[item.TaskIndex], m.doc.Tasks[prevTaskIdx] = m.doc.Tasks[prevTaskIdx], m.doc.Tasks[item.TaskIndex]
+				newItems := m.visibleItems()
+				for idx, it := range newItems {
+					if it.TaskIndex == prevTaskIdx && it.SubtaskIndex == -1 {
+						m.cursor = idx
+						break
+					}
+				}
+				m.status = "task moved up"
+				return m, m.persist()
+			}
+			m.status = "already at top"
+			return m, nil
+		} else {
+			if item.SubtaskIndex > 0 {
+				m = m.withUndo()
+				parent := &m.doc.Tasks[item.TaskIndex]
+				prevSubIdx := item.SubtaskIndex - 1
+				parent.Subtasks[item.SubtaskIndex], parent.Subtasks[prevSubIdx] = parent.Subtasks[prevSubIdx], parent.Subtasks[item.SubtaskIndex]
+				parent.UpdatedAt = time.Now()
+				newItems := m.visibleItems()
+				for idx, it := range newItems {
+					if it.TaskIndex == item.TaskIndex && it.SubtaskIndex == prevSubIdx {
+						m.cursor = idx
+						break
+					}
+				}
+				m.status = "subtask moved up"
+				return m, m.persist()
+			}
+			m.status = "subtask already at top"
+			return m, nil
 		}
-		m.status = "already at top"
-		return m, nil
 
 	case key.Matches(msg, m.keys.MoveDown):
-		if len(visible) == 0 {
+		if len(items) == 0 {
 			return m, nil
 		}
-		if m.cursor < len(visible)-1 {
-			realIdx := visible[m.cursor]
-			nextIdx := visible[m.cursor+1]
-			m = m.withUndo()
-			m.doc.Tasks[realIdx], m.doc.Tasks[nextIdx] = m.doc.Tasks[nextIdx], m.doc.Tasks[realIdx]
-			m.cursor++
-			m.status = "task moved down"
-			return m, m.persist()
+		item := items[m.cursor]
+		if item.SubtaskIndex == -1 {
+			if item.TaskIndex < len(m.doc.Tasks)-1 {
+				m = m.withUndo()
+				nextTaskIdx := item.TaskIndex + 1
+				m.doc.Tasks[item.TaskIndex], m.doc.Tasks[nextTaskIdx] = m.doc.Tasks[nextTaskIdx], m.doc.Tasks[item.TaskIndex]
+				newItems := m.visibleItems()
+				for idx, it := range newItems {
+					if it.TaskIndex == nextTaskIdx && it.SubtaskIndex == -1 {
+						m.cursor = idx
+						break
+					}
+				}
+				m.status = "task moved down"
+				return m, m.persist()
+			}
+			m.status = "already at bottom"
+			return m, nil
+		} else {
+			parent := &m.doc.Tasks[item.TaskIndex]
+			if item.SubtaskIndex < len(parent.Subtasks)-1 {
+				m = m.withUndo()
+				nextSubIdx := item.SubtaskIndex + 1
+				parent.Subtasks[item.SubtaskIndex], parent.Subtasks[nextSubIdx] = parent.Subtasks[nextSubIdx], parent.Subtasks[item.SubtaskIndex]
+				parent.UpdatedAt = time.Now()
+				newItems := m.visibleItems()
+				for idx, it := range newItems {
+					if it.TaskIndex == item.TaskIndex && it.SubtaskIndex == nextSubIdx {
+						m.cursor = idx
+						break
+					}
+				}
+				m.status = "subtask moved down"
+				return m, m.persist()
+			}
+			m.status = "subtask already at bottom"
+			return m, nil
 		}
-		m.status = "already at bottom"
-		return m, nil
 
 	case key.Matches(msg, m.keys.Undo):
 		if len(m.undoStack) == 0 {
 			m.status = "nothing to undo"
 			return m, nil
 		}
-		current := make([]model.Task, len(m.doc.Tasks))
-		copy(current, m.doc.Tasks)
-		m.redoStack = append(m.redoStack, current)
-
+		m.redoStack = append(m.redoStack, cloneTasks(m.doc.Tasks))
 		last := m.undoStack[len(m.undoStack)-1]
 		m.undoStack = m.undoStack[:len(m.undoStack)-1]
 		m.doc.Tasks = last
 
-		newVis := m.visibleIndices()
-		if m.cursor >= len(newVis) && m.cursor > 0 {
-			m.cursor = len(newVis) - 1
+		newItems := m.visibleItems()
+		if m.cursor >= len(newItems) && m.cursor > 0 {
+			m.cursor = len(newItems) - 1
 		}
 		m.streak = storage.CalculateStreak()
 		m.status = "action undone"
@@ -361,17 +522,14 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status = "nothing to redo"
 			return m, nil
 		}
-		current := make([]model.Task, len(m.doc.Tasks))
-		copy(current, m.doc.Tasks)
-		m.undoStack = append(m.undoStack, current)
-
+		m.undoStack = append(m.undoStack, cloneTasks(m.doc.Tasks))
 		next := m.redoStack[len(m.redoStack)-1]
 		m.redoStack = m.redoStack[:len(m.redoStack)-1]
 		m.doc.Tasks = next
 
-		newVis := m.visibleIndices()
-		if m.cursor >= len(newVis) && m.cursor > 0 {
-			m.cursor = len(newVis) - 1
+		newItems := m.visibleItems()
+		if m.cursor >= len(newItems) && m.cursor > 0 {
+			m.cursor = len(newItems) - 1
 		}
 		m.streak = storage.CalculateStreak()
 		m.status = "action redone"
@@ -391,7 +549,7 @@ func (m Model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.Help):
-		m.status = "a add · e edit · d del · p prio · J/K move · / filter · C clear · u undo · c copy · q quit"
+		m.status = "a add · s subtask · tab fold · e edit · d del · p prio · J/K move · / filter · C clear · u undo · c copy · q quit"
 	}
 	return m, nil
 }
@@ -443,7 +601,10 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		m = m.withUndo()
 		now := time.Now()
-		if m.mode == ModeAdd {
+		items := m.visibleItems()
+
+		switch m.mode {
+		case ModeAdd:
 			task := model.Task{
 				ID:        uuid.NewString(),
 				Title:     title,
@@ -453,18 +614,54 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			task.Normalize()
 			m.doc.Tasks = append(m.doc.Tasks, task)
-			m.cursor = len(m.doc.Tasks) - 1
 			m.status = "task added"
-		} else if m.mode == ModeEdit && len(m.doc.Tasks) > 0 {
-			visible := m.visibleIndices()
-			realIdx := m.cursor
-			if len(visible) > 0 && m.cursor < len(visible) {
-				realIdx = visible[m.cursor]
+			newItems := m.visibleItems()
+			m.cursor = len(newItems) - 1
+
+		case ModeAddSubtask:
+			if len(items) > 0 && m.cursor < len(items) {
+				item := items[m.cursor]
+				parent := &m.doc.Tasks[item.TaskIndex]
+				sub := model.Subtask{
+					ID:        uuid.NewString(),
+					Title:     title,
+					Done:      false,
+					CreatedAt: now,
+					UpdatedAt: now,
+				}
+				parent.Subtasks = append(parent.Subtasks, sub)
+				parent.UpdatedAt = now
+				delete(m.collapsed, parent.ID) // ensure expanded
+				m.status = "subtask added"
+				newItems := m.visibleItems()
+				for idx, it := range newItems {
+					if it.TaskIndex == item.TaskIndex && it.SubtaskIndex == len(parent.Subtasks)-1 {
+						m.cursor = idx
+						break
+					}
+				}
 			}
-			m.doc.Tasks[realIdx].Title = title
-			m.doc.Tasks[realIdx].UpdatedAt = now
-			m.doc.Tasks[realIdx].Normalize()
-			m.status = "task updated"
+
+		case ModeEdit:
+			if len(items) > 0 && m.cursor < len(items) {
+				item := items[m.cursor]
+				m.doc.Tasks[item.TaskIndex].Title = title
+				m.doc.Tasks[item.TaskIndex].UpdatedAt = now
+				m.doc.Tasks[item.TaskIndex].Normalize()
+				m.status = "task updated"
+			}
+
+		case ModeEditSubtask:
+			if len(items) > 0 && m.cursor < len(items) {
+				item := items[m.cursor]
+				if item.SubtaskIndex >= 0 {
+					parent := &m.doc.Tasks[item.TaskIndex]
+					parent.Subtasks[item.SubtaskIndex].Title = title
+					parent.Subtasks[item.SubtaskIndex].UpdatedAt = now
+					parent.UpdatedAt = now
+					m.status = "subtask updated"
+				}
+			}
 		}
 
 		m.mode = ModeList
@@ -480,16 +677,25 @@ func (m Model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch strings.ToLower(msg.String()) {
 	case "y":
-		visible := m.visibleIndices()
-		if len(visible) > 0 && m.cursor < len(visible) {
-			realIdx := visible[m.cursor]
+		items := m.visibleItems()
+		if len(items) > 0 && m.cursor < len(items) {
+			item := items[m.cursor]
 			m = m.withUndo()
-			m.doc.Tasks = append(m.doc.Tasks[:realIdx], m.doc.Tasks[realIdx+1:]...)
-			newVis := m.visibleIndices()
-			if m.cursor >= len(newVis) && m.cursor > 0 {
-				m.cursor--
+			if m.mode == ModeConfirmDeleteSubtask && item.SubtaskIndex >= 0 {
+				parent := &m.doc.Tasks[item.TaskIndex]
+				subIdx := item.SubtaskIndex
+				parent.Subtasks = append(parent.Subtasks[:subIdx], parent.Subtasks[subIdx+1:]...)
+				parent.UpdatedAt = time.Now()
+				m.status = "subtask deleted"
+			} else {
+				taskIdx := item.TaskIndex
+				m.doc.Tasks = append(m.doc.Tasks[:taskIdx], m.doc.Tasks[taskIdx+1:]...)
+				m.status = "task deleted"
 			}
-			m.status = "task deleted"
+			newItems := m.visibleItems()
+			if m.cursor >= len(newItems) && m.cursor > 0 {
+				m.cursor = len(newItems) - 1
+			}
 		}
 		m.mode = ModeList
 		return m, m.persist()
@@ -503,9 +709,7 @@ func (m Model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) persist() tea.Cmd {
 	doc := *m.doc
-	tasks := make([]model.Task, len(m.doc.Tasks))
-	copy(tasks, m.doc.Tasks)
-	doc.Tasks = tasks
+	doc.Tasks = cloneTasks(m.doc.Tasks)
 
 	return func() tea.Msg {
 		if err := storage.Save(&doc); err != nil {

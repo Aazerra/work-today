@@ -33,6 +33,11 @@ func RunWithIO(args []string, out, errOut io.Writer) error {
 	switch cmd {
 	case "add", "+":
 		return runAdd(subArgs, out)
+	case "add-subtask", "subtask", "sub":
+		if len(subArgs) > 0 && subArgs[0] == "add" {
+			subArgs = subArgs[1:]
+		}
+		return runAddSubtask(subArgs, out)
 	case "list", "ls":
 		return runList(subArgs, out)
 	case "status":
@@ -135,6 +140,51 @@ func runAdd(args []string, out io.Writer) error {
 	return nil
 }
 
+func runAddSubtask(args []string, out io.Writer) error {
+	if len(args) < 2 {
+		return errors.New("usage: today add-subtask <task-number> <title>")
+	}
+
+	taskIdx, err := strconv.Atoi(args[0])
+	if err != nil || taskIdx < 1 {
+		return fmt.Errorf("invalid task number: %q (must be a positive integer)", args[0])
+	}
+
+	title := strings.TrimSpace(strings.Join(args[1:], " "))
+	if title == "" {
+		return errors.New("subtask title cannot be empty")
+	}
+
+	doc, err := storage.Load()
+	if err != nil {
+		return fmt.Errorf("load tasks: %w", err)
+	}
+
+	if taskIdx > len(doc.Tasks) {
+		return fmt.Errorf("task number %d out of range (total %d tasks)", taskIdx, len(doc.Tasks))
+	}
+
+	now := time.Now()
+	subtask := model.Subtask{
+		ID:        uuid.NewString(),
+		Title:     title,
+		Done:      false,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	parent := &doc.Tasks[taskIdx-1]
+	parent.Subtasks = append(parent.Subtasks, subtask)
+	parent.UpdatedAt = now
+
+	if err := storage.Save(doc); err != nil {
+		return fmt.Errorf("save task: %w", err)
+	}
+
+	fmt.Fprintf(out, "Added subtask to #%d: %s\n", taskIdx, title)
+	return nil
+}
+
 func runList(args []string, out io.Writer) error {
 	doc, err := storage.Load()
 	if err != nil {
@@ -187,7 +237,19 @@ func runList(args []string, out io.Writer) error {
 		if t.Priority != "" {
 			pBadge = fmt.Sprintf("[%s] ", model.PriorityLabel(t.Priority))
 		}
-		fmt.Fprintf(out, "%2d. %s %s%s\n", item.origIndex, model.StatusGlyph(t.Status), pBadge, t.Title)
+		progress := ""
+		if len(t.Subtasks) > 0 {
+			stDone, stTotal := t.SubtaskProgress()
+			progress = fmt.Sprintf(" (%d/%d)", stDone, stTotal)
+		}
+		fmt.Fprintf(out, "%2d. %s %s%s%s\n", item.origIndex, model.StatusGlyph(t.Status), pBadge, t.Title, progress)
+		for j, st := range t.Subtasks {
+			stGlyph := "[ ]"
+			if st.Done {
+				stGlyph = "[x]"
+			}
+			fmt.Fprintf(out, "       %d.%d. %s %s\n", item.origIndex, j+1, stGlyph, st.Title)
+		}
 	}
 	return nil
 }
@@ -230,12 +292,40 @@ func runStatus(out io.Writer) error {
 
 func runDone(args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: today done <task-number>")
+		return errors.New("usage: today done <task-number>[.<subtask-number>]")
 	}
 
-	idx, err := strconv.Atoi(args[0])
-	if err != nil || idx < 1 {
-		return fmt.Errorf("invalid task number: %q (must be a positive integer)", args[0])
+	target := args[0]
+	var taskIdx, subIdx int
+	var err error
+
+	if strings.Contains(target, ".") {
+		parts := strings.SplitN(target, ".", 2)
+		taskIdx, err = strconv.Atoi(parts[0])
+		if err != nil || taskIdx < 1 {
+			return fmt.Errorf("invalid task number: %q (must be a positive integer)", parts[0])
+		}
+		subIdx, err = strconv.Atoi(parts[1])
+		if err != nil || subIdx < 1 {
+			return fmt.Errorf("invalid subtask number: %q (must be a positive integer)", parts[1])
+		}
+	} else if len(args) >= 2 {
+		tIdx, err1 := strconv.Atoi(args[0])
+		sIdx, err2 := strconv.Atoi(args[1])
+		if err1 == nil && err2 == nil && tIdx >= 1 && sIdx >= 1 {
+			taskIdx = tIdx
+			subIdx = sIdx
+		} else {
+			taskIdx, err = strconv.Atoi(target)
+			if err != nil || taskIdx < 1 {
+				return fmt.Errorf("invalid task number: %q (must be a positive integer)", target)
+			}
+		}
+	} else {
+		taskIdx, err = strconv.Atoi(target)
+		if err != nil || taskIdx < 1 {
+			return fmt.Errorf("invalid task number: %q (must be a positive integer)", target)
+		}
 	}
 
 	doc, err := storage.Load()
@@ -243,19 +333,37 @@ func runDone(args []string, out io.Writer) error {
 		return fmt.Errorf("load tasks: %w", err)
 	}
 
-	if idx > len(doc.Tasks) {
-		return fmt.Errorf("task number %d out of range (total %d tasks)", idx, len(doc.Tasks))
+	if taskIdx > len(doc.Tasks) {
+		return fmt.Errorf("task number %d out of range (total %d tasks)", taskIdx, len(doc.Tasks))
 	}
 
-	task := &doc.Tasks[idx-1]
-	task.Status = model.StatusDone
-	task.UpdatedAt = time.Now()
+	parent := &doc.Tasks[taskIdx-1]
+	now := time.Now()
+
+	if subIdx > 0 {
+		if subIdx > len(parent.Subtasks) {
+			return fmt.Errorf("subtask number %d out of range (total %d subtasks)", subIdx, len(parent.Subtasks))
+		}
+		st := &parent.Subtasks[subIdx-1]
+		st.Done = true
+		st.UpdatedAt = now
+		parent.UpdatedAt = now
+
+		if err := storage.Save(doc); err != nil {
+			return fmt.Errorf("save task: %w", err)
+		}
+		fmt.Fprintf(out, "Completed subtask: #%d.%d %s\n", taskIdx, subIdx, st.Title)
+		return nil
+	}
+
+	parent.Status = model.StatusDone
+	parent.UpdatedAt = now
 
 	if err := storage.Save(doc); err != nil {
 		return fmt.Errorf("save task: %w", err)
 	}
 
-	fmt.Fprintf(out, "Completed: #%d %s\n", idx, task.Title)
+	fmt.Fprintf(out, "Completed: #%d %s\n", taskIdx, parent.Title)
 	return nil
 }
 
@@ -419,9 +527,10 @@ func printHelp(out io.Writer) {
 USAGE:
   today                       Launch interactive TUI
   today add [-p P] [-t T] ... Add a task for today (+tag, @context supported)
+  today add-subtask <#> <txt> Add a subtask to a task by number
   today list [filter]         Display today's task list (filtered by tag/context/text)
   today status                Print one-line status summary (with streak)
-  today done <number>         Mark task by number as completed
+  today done <#>[.<sub#>]     Mark task or subtask as completed
   today clear                 Archive and clear completed tasks from today's list
   today history [days]        View completed task history across past days
   today stats                 View completion streaks and top tags/contexts
@@ -439,14 +548,16 @@ TAGS & CONTEXTS:
   #tag                        General tag (e.g. #meeting, #p1)
 
 TUI KEYBOARD SHORTCUTS:
-  j, k, ↑, ↓                  Navigate tasks
-  J, K, Shift+↑, Shift+↓      Move selected task down / up (reorder)
+  j, k, ↑, ↓                  Navigate tasks and subtasks
+  Tab                         Toggle collapse/expand task subtasks
+  s                           Add subtask to selected task
+  J, K, Shift+↑, Shift+↓      Move selected task/subtask down / up (reorder)
   p                           Cycle task priority (None → HIGH → MED → LOW)
   /                           Search & filter tasks by tag/context/text
-  Enter, Space                Cycle task status (TODO → DOING → DONE)
+  Enter, Space                Cycle status / toggle subtask completion
   a                           Add task
-  e                           Edit task title
-  d                           Delete task (prompts confirmation)
+  e                           Edit task or subtask title
+  d                           Delete task or subtask (prompts confirmation)
   C                           Clear completed tasks to archive
   u                           Undo last action (up to 50 levels)
   U, Ctrl+r                   Redo last undone action

@@ -27,6 +27,15 @@ const (
 // ValidPriorities lists priorities in cycle order: none → high → medium → low → none.
 var ValidPriorities = []string{PriorityNone, PriorityHigh, PriorityMedium, PriorityLow}
 
+// Subtask is a child checklist item under a Task.
+type Subtask struct {
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Done      bool      `json:"done"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 // Task is a single work item for the day.
 type Task struct {
 	ID        string    `json:"id"`
@@ -35,6 +44,7 @@ type Task struct {
 	Priority  string    `json:"priority,omitempty"`
 	Tags      []string  `json:"tags,omitempty"`
 	Contexts  []string  `json:"contexts,omitempty"`
+	Subtasks  []Subtask `json:"subtasks,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -160,8 +170,26 @@ func ExportMarkdown(doc *Document) string {
 		}
 
 		sb.WriteString(fmt.Sprintf("- %s %s%s\n", glyph, pBadge, t.Title))
+		for _, st := range t.Subtasks {
+			stGlyph := "[ ]"
+			if st.Done {
+				stGlyph = "[x]"
+			}
+			sb.WriteString(fmt.Sprintf("  - %s %s\n", stGlyph, st.Title))
+		}
 	}
 	return sb.String()
+}
+
+// SubtaskProgress returns the count of completed subtasks and total subtasks.
+func (t Task) SubtaskProgress() (done int, total int) {
+	total = len(t.Subtasks)
+	for _, st := range t.Subtasks {
+		if st.Done {
+			done++
+		}
+	}
+	return done, total
 }
 
 // ExtractTagsAndContexts inspects a string and extracts all +project/#tag tags and @context contexts.
@@ -253,6 +281,13 @@ func (t Task) MatchesFilter(query string) bool {
 	// Match priority
 	if t.Priority != "" && strings.Contains(strings.ToLower(t.Priority), q) {
 		return true
+	}
+
+	// Match subtasks
+	for _, st := range t.Subtasks {
+		if strings.Contains(strings.ToLower(st.Title), q) {
+			return true
+		}
 	}
 
 	return false

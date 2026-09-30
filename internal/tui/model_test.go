@@ -47,6 +47,8 @@ func sendKey(m tea.Model, keyStr string) tea.Model {
 		msg = tea.KeyMsg{Type: tea.KeyEnter}
 	case "esc":
 		msg = tea.KeyMsg{Type: tea.KeyEsc}
+	case "tab":
+		msg = tea.KeyMsg{Type: tea.KeyTab}
 	default:
 		runes := []rune(keyStr)
 		msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: runes}
@@ -321,5 +323,91 @@ func TestStreakDisplay(t *testing.T) {
 	view := m.View()
 	if !strings.Contains(view, "1 day streak") {
 		t.Fatalf("expected view to contain streak indicator '1 day streak', got:\n%s", view)
+	}
+}
+
+func TestTuiSubtasks(t *testing.T) {
+	now := time.Now()
+	tasks := []model.Task{
+		{ID: "1", Title: "Parent Task", Status: model.StatusTodo, CreatedAt: now, UpdatedAt: now},
+	}
+
+	m := setupTestModel(t, tasks)
+
+	// 1. Add subtask 's' -> type "Write specs" -> enter
+	m = sendKey(m, "s").(tui.Model)
+	m = typeString(m, "Write specs").(tui.Model)
+	m = sendKey(m, "enter").(tui.Model)
+
+	doc, err := storage.Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(doc.Tasks[0].Subtasks) != 1 || doc.Tasks[0].Subtasks[0].Title != "Write specs" {
+		t.Fatalf("expected subtask 'Write specs', got %+v", doc.Tasks[0].Subtasks)
+	}
+
+	// View should contain parent progress badge (0/1) and subtask
+	view := m.View()
+	if !strings.Contains(view, "(0/1)") {
+		t.Fatalf("expected (0/1) in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Write specs") {
+		t.Fatalf("expected 'Write specs' in view, got:\n%s", view)
+	}
+
+	// 2. Add second subtask
+	m = sendKey(m, "s").(tui.Model)
+	m = typeString(m, "Implement code").(tui.Model)
+	m = sendKey(m, "enter").(tui.Model)
+
+	// Cursor is now on second subtask. Move up 'k' to first subtask
+	m = sendKey(m, "up").(tui.Model)
+
+	// Toggle first subtask 'enter'
+	m = sendKey(m, "enter").(tui.Model)
+
+	doc, err = storage.Load()
+	if err != nil {
+		t.Fatalf("load after toggle: %v", err)
+	}
+	if !doc.Tasks[0].Subtasks[0].Done {
+		t.Fatalf("expected first subtask to be done")
+	}
+
+	// View should show (1/2)
+	view = m.View()
+	if !strings.Contains(view, "(1/2)") {
+		t.Fatalf("expected (1/2) in view, got:\n%s", view)
+	}
+
+	// 3. Move cursor up to parent task and press 'tab' to fold
+	m = sendKey(m, "up").(tui.Model)
+	m = sendKey(m, "tab").(tui.Model)
+
+	// Subtasks should now be hidden in view
+	view = m.View()
+	if strings.Contains(view, "Write specs") {
+		t.Fatalf("expected subtasks to be folded/hidden in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "▸") {
+		t.Fatalf("expected fold glyph ▸ in view, got:\n%s", view)
+	}
+
+	// Press 'tab' to unfold
+	m = sendKey(m, "tab").(tui.Model)
+	view = m.View()
+	if !strings.Contains(view, "Write specs") {
+		t.Fatalf("expected subtasks to be visible after unfolding, got:\n%s", view)
+	}
+
+	// 4. Test undo: undo toggle -> first subtask not done
+	m = sendKey(m, "u").(tui.Model)
+	doc, err = storage.Load()
+	if err != nil {
+		t.Fatalf("load after undo: %v", err)
+	}
+	if doc.Tasks[0].Subtasks[0].Done {
+		t.Fatalf("expected first subtask undone to not done")
 	}
 }

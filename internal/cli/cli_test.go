@@ -239,3 +239,63 @@ func TestCliErrors(t *testing.T) {
 		t.Fatalf("expected error for unknown command")
 	}
 }
+
+func TestCliSubtasks(t *testing.T) {
+	setupTestStorage(t)
+
+	var out, errOut bytes.Buffer
+
+	// 1. Add parent task
+	err := cli.RunWithIO([]string{"add", "Parent task"}, &out, &errOut)
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+
+	// 2. Add subtask
+	out.Reset()
+	err = cli.RunWithIO([]string{"add-subtask", "1", "First subtask"}, &out, &errOut)
+	if err != nil {
+		t.Fatalf("add-subtask: %v", err)
+	}
+	if !strings.Contains(out.String(), "Added subtask to #1: First subtask") {
+		t.Fatalf("unexpected add-subtask output: %s", out.String())
+	}
+
+	// 3. Add second subtask via alias "subtask add"
+	out.Reset()
+	err = cli.RunWithIO([]string{"subtask", "add", "1", "Second subtask"}, &out, &errOut)
+	if err != nil {
+		t.Fatalf("subtask add: %v", err)
+	}
+
+	// 4. List tasks and verify subtasks and progress badge
+	out.Reset()
+	err = cli.RunWithIO([]string{"list"}, &out, &errOut)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	listOut := out.String()
+	if !strings.Contains(listOut, "(0/2)") {
+		t.Fatalf("expected progress (0/2) in list output: %s", listOut)
+	}
+	if !strings.Contains(listOut, "1.1. [ ] First subtask") || !strings.Contains(listOut, "1.2. [ ] Second subtask") {
+		t.Fatalf("expected indented subtasks in list output: %s", listOut)
+	}
+
+	// 5. Complete first subtask using "today done 1.1"
+	out.Reset()
+	err = cli.RunWithIO([]string{"done", "1.1"}, &out, &errOut)
+	if err != nil {
+		t.Fatalf("done 1.1: %v", err)
+	}
+	if !strings.Contains(out.String(), "Completed subtask: #1.1 First subtask") {
+		t.Fatalf("unexpected done subtask output: %s", out.String())
+	}
+
+	// 6. Verify progress updated to (1/2)
+	out.Reset()
+	_ = cli.RunWithIO([]string{"list"}, &out, &errOut)
+	if !strings.Contains(out.String(), "(1/2)") {
+		t.Fatalf("expected progress (1/2) in list output: %s", out.String())
+	}
+}

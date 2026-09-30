@@ -122,6 +122,22 @@ var (
 			Foreground(colorMuted).
 			Italic(true).
 			Padding(1, 2)
+
+	treeBranchStyle = lipgloss.NewStyle().
+			Foreground(colorBorder)
+
+	foldGlyphStyle = lipgloss.NewStyle().
+			Foreground(colorMuted)
+
+	progressBadgeStyle = lipgloss.NewStyle().
+				Foreground(colorMuted)
+
+	subtaskTitleTodoStyle = lipgloss.NewStyle().
+				Foreground(colorTodo)
+
+	subtaskTitleDoneStyle = lipgloss.NewStyle().
+				Foreground(colorMuted).
+				Strikethrough(true)
 )
 
 func (m Model) View() string {
@@ -175,6 +191,7 @@ func (m Model) renderHeader() string {
 
 func (m Model) renderBody() string {
 	list := listStyle.Render(m.renderTaskList())
+	items := m.visibleItems()
 
 	switch m.mode {
 	case ModeAdd:
@@ -186,6 +203,21 @@ func (m Model) renderBody() string {
 			),
 		)
 		return lipgloss.JoinVertical(lipgloss.Left, list, box)
+
+	case ModeAddSubtask:
+		parentTitle := ""
+		if len(items) > 0 && m.cursor < len(items) {
+			parentTitle = m.doc.Tasks[items[m.cursor].TaskIndex].Title
+		}
+		box := promptBoxStyle.Render(
+			lipgloss.JoinVertical(
+				lipgloss.Left,
+				promptLabelStyle.Render(fmt.Sprintf("Add subtask to %q", parentTitle)),
+				m.input.View(),
+			),
+		)
+		return lipgloss.JoinVertical(lipgloss.Left, list, box)
+
 	case ModeEdit:
 		box := promptBoxStyle.Render(
 			lipgloss.JoinVertical(
@@ -195,6 +227,17 @@ func (m Model) renderBody() string {
 			),
 		)
 		return lipgloss.JoinVertical(lipgloss.Left, list, box)
+
+	case ModeEditSubtask:
+		box := promptBoxStyle.Render(
+			lipgloss.JoinVertical(
+				lipgloss.Left,
+				promptLabelStyle.Render("Edit subtask"),
+				m.input.View(),
+			),
+		)
+		return lipgloss.JoinVertical(lipgloss.Left, list, box)
+
 	case ModeFilter:
 		box := promptBoxStyle.Render(
 			lipgloss.JoinVertical(
@@ -204,31 +247,47 @@ func (m Model) renderBody() string {
 			),
 		)
 		return lipgloss.JoinVertical(lipgloss.Left, list, box)
+
 	case ModeConfirmDelete:
 		title := ""
-		visible := m.visibleIndices()
-		if len(visible) > 0 && m.cursor < len(visible) {
-			title = m.doc.Tasks[visible[m.cursor]].Title
+		if len(items) > 0 && m.cursor < len(items) {
+			title = m.doc.Tasks[items[m.cursor].TaskIndex].Title
 		}
-		msg := listStyle.Render(dangerStyle.Render(fmt.Sprintf("Delete %q? (y/n)", title)))
+		msg := listStyle.Render(dangerStyle.Render(fmt.Sprintf("Delete task %q? (y/n)", title)))
 		return lipgloss.JoinVertical(lipgloss.Left, list, msg)
+
+	case ModeConfirmDeleteSubtask:
+		title := ""
+		if len(items) > 0 && m.cursor < len(items) {
+			it := items[m.cursor]
+			if it.SubtaskIndex >= 0 {
+				title = m.doc.Tasks[it.TaskIndex].Subtasks[it.SubtaskIndex].Title
+			}
+		}
+		msg := listStyle.Render(dangerStyle.Render(fmt.Sprintf("Delete subtask %q? (y/n)", title)))
+		return lipgloss.JoinVertical(lipgloss.Left, list, msg)
+
 	default:
 		return list
 	}
 }
 
 func (m Model) renderTaskList() string {
-	visible := m.visibleIndices()
-	if len(visible) == 0 {
+	items := m.visibleItems()
+	if len(items) == 0 {
 		if m.filter != "" {
 			return emptyStyle.Render(fmt.Sprintf("No tasks matching %q. Press esc to clear filter.", m.filter))
 		}
 		return emptyStyle.Render("No tasks yet. Press a to add one.")
 	}
 
-	lines := make([]string, 0, len(visible))
-	for displayIdx, realIdx := range visible {
-		lines = append(lines, m.renderTaskRow(displayIdx, m.doc.Tasks[realIdx]))
+	lines := make([]string, 0, len(items))
+	for displayIdx, it := range items {
+		if it.SubtaskIndex == -1 {
+			lines = append(lines, m.renderTaskRow(displayIdx, it.TaskIndex, m.doc.Tasks[it.TaskIndex]))
+		} else {
+			lines = append(lines, m.renderSubtaskRow(displayIdx, it.TaskIndex, it.SubtaskIndex))
+		}
 	}
 	return strings.Join(lines, "\n")
 }
@@ -325,7 +384,7 @@ func renderTaskTitle(t model.Task) string {
 	return res
 }
 
-func (m Model) renderTaskRow(displayIdx int, t model.Task) string {
+func (m Model) renderTaskRow(displayIdx int, taskIdx int, t model.Task) string {
 	var glyphStyle, labelStyle lipgloss.Style
 	switch t.Status {
 	case model.StatusInProgress:
@@ -341,26 +400,76 @@ func (m Model) renderTaskRow(displayIdx int, t model.Task) string {
 		cursor = cursorMarkStyle.Render("› ")
 	}
 
+	foldGlyph := "  "
+	if len(t.Subtasks) > 0 {
+		if m.collapsed[t.ID] {
+			foldGlyph = foldGlyphStyle.Render("▸ ")
+		} else {
+			foldGlyph = foldGlyphStyle.Render("▾ ")
+		}
+	}
+
 	pBadge := renderPriorityBadge(t.Priority, t.Status == model.StatusDone)
 	title := renderTaskTitle(t)
+
+	progress := ""
+	if len(t.Subtasks) > 0 {
+		done, total := t.SubtaskProgress()
+		progress = " " + progressBadgeStyle.Render(fmt.Sprintf("(%d/%d)", done, total))
+	}
 
 	return lipgloss.JoinHorizontal(
 		lipgloss.Top,
 		cursor,
+		foldGlyph,
 		glyphStyle.Render(model.StatusGlyph(t.Status)),
 		" ",
 		labelStyle.Render(model.StatusLabel(t.Status)),
 		"  ",
 		pBadge,
 		title,
+		progress,
+	)
+}
+
+func (m Model) renderSubtaskRow(displayIdx int, taskIdx int, subtaskIdx int) string {
+	parent := m.doc.Tasks[taskIdx]
+	st := parent.Subtasks[subtaskIdx]
+
+	cursor := "  "
+	if displayIdx == m.cursor {
+		cursor = cursorMarkStyle.Render("› ")
+	}
+
+	isLast := subtaskIdx == len(parent.Subtasks)-1
+	branchStr := "   ├─ "
+	if isLast {
+		branchStr = "   └─ "
+	}
+	branch := treeBranchStyle.Render(branchStr)
+
+	glyph := todoGlyphStyle.Render("[ ]")
+	title := subtaskTitleTodoStyle.Render(st.Title)
+	if st.Done {
+		glyph = doneGlyphStyle.Render("[x]")
+		title = subtaskTitleDoneStyle.Render(st.Title)
+	}
+
+	return lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		cursor,
+		branch,
+		glyph,
+		" ",
+		title,
 	)
 }
 
 func (m Model) renderFooter() string {
-	help := "a add · e edit · d del · p prio · J/K move · / filter · C clear · u undo · c copy · ↵ cycle · j/k nav · q quit"
-	if m.mode == ModeAdd || m.mode == ModeEdit {
+	help := "a add · s subtask · tab fold · e edit · d del · p prio · J/K move · / filter · C clear · u undo · c copy · ↵ toggle · q quit"
+	if m.mode == ModeAdd || m.mode == ModeEdit || m.mode == ModeAddSubtask || m.mode == ModeEditSubtask {
 		help = "enter confirm · esc cancel"
-	} else if m.mode == ModeConfirmDelete {
+	} else if m.mode == ModeConfirmDelete || m.mode == ModeConfirmDeleteSubtask {
 		help = "y confirm · n/esc cancel"
 	} else if m.mode == ModeFilter {
 		help = "enter apply · esc clear"

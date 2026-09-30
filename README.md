@@ -10,14 +10,15 @@ Focus strictly on **what needs to get done today**—no endless backlog hoarding
 
 ```text
  work today
- Mon, 28 Sep 2026  ·  2/4 done  ·  🔥 3 day streak  ·  ~/.local/share/work-today/tasks.json
+ Wed, 30 Sep 2026  ·  2/3 done  ·  🔥 4 day streak  ·  ~/.local/share/work-today/tasks.json
 ────────────────────────────────────────────────────────────────────────────────────────
-  [x] DONE         Ship database migration +ops @work
-› [~] DOING [HIGH] Implement OAuth2 token refresh +auth @work
-  [ ] TODO  [MED]  Draft weekly team summary @home
-  [ ] TODO  [LOW]  Review pull requests +core
+    [x] DONE         Ship database migration +ops @work
+  ▾ [~] DOING [HIGH] Implement OAuth2 token refresh +auth @work (1/2)
+      ├─ [x] Generate refresh tokens
+›     └─ [ ] Set up redis token expiry store
+  ▸ [ ] TODO  [MED]  Draft weekly team summary @home (0/3)
 
- a add · e edit · d del · p prio · J/K move · / filter · C clear · u undo · c copy · ↵ cycle · q quit
+ a add · s subtask · tab fold · e edit · d del · p prio · J/K move · / filter · C clear · u undo · c copy · ↵ toggle · q quit
 ```
 
 ---
@@ -27,6 +28,11 @@ Focus strictly on **what needs to get done today**—no endless backlog hoarding
 - **Daily Focus & Automatic Archive Rollover**:
   - Focus exclusively on today's tasks.
   - When the calendar date rolls over, yesterday's completed tasks are automatically archived to dated history snapshots (`YYYY-MM-DD.json`), while open tasks (`TODO`, `DOING`) carry forward smoothly.
+- **Subtasks & Collapsible Tree View**:
+  - Break down larger tasks into actionable checklists with progress badges like `(1/3)`.
+  - Fold and unfold subtasks with <kbd>Tab</kbd> in the TUI.
+  - Navigate directly into subtasks with <kbd>j</kbd>/<kbd>k</kbd>, toggle completion with <kbd>Enter</kbd>/<kbd>Space</kbd>, edit with <kbd>e</kbd>, and reorder with <kbd>J</kbd>/<kbd>K</kbd>.
+  - Add via TUI (<kbd>s</kbd>) or CLI (`today add-subtask <#> "subtask title"`). Complete via CLI with `today done 1.2`.
 - **Tags & Contexts**:
   - Organize tasks naturally with inline tags like `+project`, contexts like `@work`, or `#tag`.
   - Filter tasks instantly in CLI (`today list +auth`, `today list @work`) or in the interactive TUI with <kbd>/</kbd>.
@@ -40,7 +46,7 @@ Focus strictly on **what needs to get done today**—no endless backlog hoarding
   - Stay motivated with consecutive-day completion streaks (displayed as `🔥 X day streak` in both CLI status and TUI header).
 - **Dual Mode (Interactive TUI & Headless CLI)**:
   - Run `today` for an interactive, full-screen terminal UI.
-  - Run `today add`, `today list`, `today status`, `today done`, or `today stats` directly from your shell or scripts.
+  - Run `today add`, `today add-subtask`, `today list`, `today status`, `today done`, or `today stats` directly from your shell or scripts.
 - **Priority Management**:
   - Categorize tasks as **HIGH**, **MED**, or **LOW** with clear, color-coded badges.
   - Cycle priorities in the TUI with <kbd>p</kbd> or specify via CLI flag `-p high`.
@@ -50,7 +56,7 @@ Focus strictly on **what needs to get done today**—no endless backlog hoarding
   - Accidental deletion, reordering, status change, or clear? Press <kbd>u</kbd> to undo (up to 50 snapshot states).
   - Press <kbd>U</kbd> or <kbd>Ctrl+R</kbd> to redo.
 - **Clipboard & Standup Export**:
-  - Press <kbd>c</kbd> or <kbd>y</kbd> in the TUI to copy a Markdown standup checklist to your system clipboard.
+  - Press <kbd>c</kbd> or <kbd>y</kbd> in the TUI to copy a Markdown standup checklist to your system clipboard (with subtasks indented!).
   - Run `today export` in shell to stream Markdown to `stdout`.
 - **XDG Base Directory Compliance & Legacy Fallback**:
   - Stores data in `$XDG_DATA_HOME/work-today/tasks.json` (defaults to `~/.local/share/work-today/tasks.json`).
@@ -97,16 +103,18 @@ today
 
 | Key | Action |
 | :--- | :--- |
-| <kbd>↑</kbd> / <kbd>k</kbd> | Navigate up |
-| <kbd>↓</kbd> / <kbd>j</kbd> | Navigate down |
-| <kbd>K</kbd> / <kbd>Shift+↑</kbd> | **Move selected task up** (reorder) |
-| <kbd>J</kbd> / <kbd>Shift+↓</kbd> | **Move selected task down** (reorder) |
-| <kbd>Enter</kbd> / <kbd>Space</kbd> | **Cycle status** (`[ ] TODO` → `[~] DOING` → `[x] DONE`) |
+| <kbd>↑</kbd> / <kbd>k</kbd> | Navigate up (into tasks & subtasks) |
+| <kbd>↓</kbd> / <kbd>j</kbd> | Navigate down (into tasks & subtasks) |
+| <kbd>Tab</kbd> | **Toggle collapse/expand** task subtasks |
+| <kbd>s</kbd> | **Add subtask** to selected task |
+| <kbd>K</kbd> / <kbd>Shift+↑</kbd> | **Move selected task/subtask up** (reorder) |
+| <kbd>J</kbd> / <kbd>Shift+↓</kbd> | **Move selected task/subtask down** (reorder) |
+| <kbd>Enter</kbd> / <kbd>Space</kbd> | **Cycle task status** (`TODO` → `DOING` → `DONE`) or **toggle subtask** (`[ ]` ↔ `[x]`) |
 | <kbd>p</kbd> | **Cycle priority** (`None` → `[HIGH]` → `[MED]` → `[LOW]`) |
 | <kbd>/</kbd> | **Filter tasks** by tag, context, or keyword (<kbd>Esc</kbd> to clear) |
 | <kbd>a</kbd> | Add new task (`+project` and `@context` supported inline) |
-| <kbd>e</kbd> | Edit selected task title |
-| <kbd>d</kbd> | Delete selected task (prompts confirmation) |
+| <kbd>e</kbd> | Edit selected task or subtask title |
+| <kbd>d</kbd> | Delete selected task or subtask (prompts confirmation) |
 | <kbd>C</kbd> | **Clear completed tasks** (moves to archive, supports undo) |
 | <kbd>u</kbd> | **Undo** last action (up to 50 levels) |
 | <kbd>U</kbd> / <kbd>Ctrl+R</kbd> | **Redo** last undone action |
@@ -120,7 +128,7 @@ today
 
 Use `today` directly from your shell, terminal aliases, or scripts without opening the full UI:
 
-#### Add Tasks
+#### Add Tasks & Subtasks
 ```bash
 # Add a task with inline tags and contexts
 today add "Fix login bug +auth @work"
@@ -128,13 +136,14 @@ today add "Fix login bug +auth @work"
 # Add with flags (-p priority, -t tag, -c context)
 today add -p high -t backend -c work "Implement API rate limiting"
 
-# Multi-word arguments don't require quotes
-today add Buy groceries on the way home @errands
+# Add a subtask to task #1
+today add-subtask 1 "Write authentication unit tests"
+today subtask add 1 "Configure JWT expiration"
 ```
 
-#### List Today's Tasks & Filtering
+#### List Today's Tasks & Subtasks
 ```bash
-# List all tasks
+# List all tasks and subtasks
 today list
 
 # Filter by project tag
@@ -148,20 +157,27 @@ today list bug
 ```
 Output:
 ```text
-Work Today (Mon, 28 Sep 2026) · 1/3 done (filter: "+auth")
- 1. [ ] [HIGH] Fix login bug +auth @work
+Work Today (Wed, 30 Sep 2026) · 1/2 done
+ 1. [~] [HIGH] Implement API rate limiting +backend @work (1/2)
+       1.1. [x] Write authentication unit tests
+       1.2. [ ] Configure JWT expiration
+ 2. [x] Review pull requests +core
 ```
 
-#### Complete a Task
+#### Complete a Task or Subtask
 ```bash
-today done 1
-# Output: Completed: #1 Fix login bug +auth @work
+# Complete a parent task
+today done 2
+
+# Complete a specific subtask (<task#>.<subtask#>)
+today done 1.2
+# Output: Completed subtask: #1.2 Configure JWT expiration
 ```
 
 #### Clear Completed Tasks
 ```bash
 today clear
-# Output: Cleared 1 completed task(s) to archive (~/.local/share/work-today/archive/2026-09-28.json).
+# Output: Cleared 1 completed task(s) to archive (~/.local/share/work-today/archive/2026-09-30.json).
 ```
 
 #### View History & Archives
@@ -172,16 +188,6 @@ today history
 # View completed tasks from the last 30 days
 today history 30
 ```
-Output:
-```text
-Archive History (past 7 days):
-[2026-09-28] (1 task)
-  1. [x] Fix login bug +auth @work
-[2026-09-27] (3 tasks)
-  1. [x] Review pull requests +core
-  2. [x] Database backup check +ops
-  3. [x] Plan weekly sprint @work
-```
 
 #### Productivity Stats & Streaks
 ```bash
@@ -189,25 +195,24 @@ today stats
 ```
 Output:
 ```text
-=== Work Today Stats ===
-Active Streak:    3 days 🔥
-Total Archived:   14 tasks across 5 days
+📊 Productivity Stats:
+  Streak:            🔥 4 days in a row
+  Today:             2/3 completed
+  Last 7 Days:       14 completed
+  Last 30 Days:      32 completed
 
-Top Projects/Tags:
-  +auth: 5 tasks
-  +ops:  4 tasks
-  +core: 3 tasks
-
-Top Contexts:
-  @work: 10 tasks
-  @home: 4 tasks
+🏷️  Top Tags & Contexts:
+    +auth            (6)
+    +backend         (5)
+    @work            (12)
+    @home            (4)
 ```
 
 #### One-Line Status Summary
 ```bash
 today status
-# Output: 2/3 done (🔥 3 day streak)
-# (or "All done! (3/3) (🔥 3 day streak)" / "No tasks")
+# Output: 2/3 done (🔥 4 day streak)
+# (or "All done! (3/3) (🔥 4 day streak)" / "No tasks")
 ```
 
 #### Export to Markdown (Daily Standup)
@@ -216,11 +221,12 @@ today export
 ```
 Output:
 ```markdown
-## Work Today (Mon, 28 Sep 2026) · 2/3 done
+## Work Today (Wed, 30 Sep 2026) · 2/3 done
 
-- [x] Ship database migration +ops @work
-- [~] [HIGH] Implement OAuth2 token refresh +auth @work
-- [ ] [MED] Draft weekly team summary @home
+- [~] [HIGH] Implement API rate limiting +backend @work
+  - [x] Write authentication unit tests
+  - [ ] Configure JWT expiration
+- [x] Review pull requests +core
 ```
 
 Save directly to notes:
@@ -260,6 +266,7 @@ Add to your `~/.bashrc` or `~/.zshrc`:
 ```bash
 alias t="today"
 alias ta="today add"
+alias tas="today add-subtask"
 alias tl="today list"
 alias td="today done"
 alias ts="today stats"
